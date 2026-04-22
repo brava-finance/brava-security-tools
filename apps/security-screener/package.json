@@ -1,0 +1,39 @@
+{
+  "name": "@brava/security-screener",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Static React app that reads the Brava security subgraph and renders an immutable, reproducible, IPFS-hostable screener for admin-vault state, pending proposals, timeline, role divergence and verification instructions.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "lint": "eslint . --max-warnings=0",
+    "lint:fix": "eslint . --fix",
+    "type-check": "tsc -b --noEmit",
+    "test": "echo 'No tests yet' && exit 0",
+    "clean": "rm -rf dist .turbo node_modules/.vite",
+    "hash": "node scripts/hash-dist.mjs"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.81.2",
+    "clsx": "^2.1.1",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1",
+    "tailwind-merge": "^3.3.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.19.0",
+    "@tailwindcss/vite": "^4.1.11",
+    "@types/node": "22.13.10",
+    "@types/react": "^19.2.3",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^4.3.4",
+    "eslint": "^9.19.0",
+    "eslint-config-prettier": "^9.0.0",
+    "tailwindcss": "^4.1.11",
+    "typescript": "5.9.2",
+    "typescript-eslint": "^8.35.1",
+    "vite": "^6.3.5"
+  }
+}

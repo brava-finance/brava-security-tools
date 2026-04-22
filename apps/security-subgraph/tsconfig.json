@@ -1,0 +1,20 @@
+{
+  "extends": "@graphprotocol/graph-ts/types/tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "outDir": "build",
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*", "tests/**/*.ts"],
+  "exclude": [
+    "**/node_modules/**/*",
+    "**/node_modules/.pnpm/**/*",
+    "**/.pnpm/**/*",
+    "build/**/*",
+    "generated/**/*",
+    ".turbo/**/*"
+  ]
+}

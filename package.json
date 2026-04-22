@@ -1,0 +1,31 @@
+{
+  "name": "brava-security-tools",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Open-source security tooling for the Brava protocol: a minimal subgraph that indexes every admin/proxy/access-control event, plus a static React screener that renders the indexed state for independent audit.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/brava-finance/brava-security-tools.git"
+  },
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "install:all": "pnpm install && pnpm --dir apps/security-subgraph install --ignore-workspace",
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "type-check": "turbo run type-check",
+    "test": "turbo run test",
+    "clean": "turbo run clean && rm -rf node_modules apps/security-subgraph/node_modules",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "prettier": "3.5.3",
+    "turbo": "^2.5.4"
+  }
+}

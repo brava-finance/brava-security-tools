@@ -1,0 +1,125 @@
+# One graph-node instance per chain. Each uses graph-node's default
+# single-network `ethereum:` env var (battle-tested), sharing a single
+# postgres (with separate databases) and a single IPFS node.
+#
+# Ports:
+#   Arbitrum — HTTP :8000, WS :8001, admin :8020, status :8030, metrics :8040
+#   Base     — HTTP :8100, WS :8101, admin :8120, status :8130, metrics :8140
+#   Mainnet  — HTTP :8200, WS :8201, admin :8220, status :8230, metrics :8240
+#   IPFS     — :5001
+#   Postgres — :5435 (host) -> 5432 (container)
+#
+# The `create-local:*` / `deploy-local:*` scripts in package.json point each
+# subgraph at the correct admin port.
+
+services:
+  graph-node-arbitrum:
+    image: graphprotocol/graph-node:v0.36.1
+    ports:
+      - '8000:8000'
+      - '8001:8001'
+      - '8020:8020'
+      - '8030:8030'
+      - '8040:8040'
+    depends_on:
+      ipfs:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    environment:
+      postgres_host: postgres
+      postgres_user: graph
+      postgres_pass: graph
+      postgres_db: graph_arbitrum
+      ipfs: 'ipfs:5001'
+      ethereum: 'arbitrum-one:${ARBITRUM_RPC_URL:?set ARBITRUM_RPC_URL in .env}'
+      GRAPH_LOG: info
+      RUST_LOG: info
+      ETHEREUM_POLLING_INTERVAL: '500'
+
+  graph-node-base:
+    image: graphprotocol/graph-node:v0.36.1
+    ports:
+      - '8100:8000'
+      - '8101:8001'
+      - '8120:8020'
+      - '8130:8030'
+      - '8140:8040'
+    depends_on:
+      ipfs:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    environment:
+      postgres_host: postgres
+      postgres_user: graph
+      postgres_pass: graph
+      postgres_db: graph_base
+      ipfs: 'ipfs:5001'
+      ethereum: 'base:${BASE_RPC_URL:?set BASE_RPC_URL in .env}'
+      GRAPH_LOG: info
+      RUST_LOG: info
+      ETHEREUM_POLLING_INTERVAL: '500'
+
+  graph-node-mainnet:
+    image: graphprotocol/graph-node:v0.36.1
+    ports:
+      - '8200:8000'
+      - '8201:8001'
+      - '8220:8020'
+      - '8230:8030'
+      - '8240:8040'
+    depends_on:
+      ipfs:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    environment:
+      postgres_host: postgres
+      postgres_user: graph
+      postgres_pass: graph
+      postgres_db: graph_mainnet
+      ipfs: 'ipfs:5001'
+      ethereum: 'mainnet:${MAINNET_RPC_URL:?set MAINNET_RPC_URL in .env}'
+      GRAPH_LOG: info
+      RUST_LOG: info
+      ETHEREUM_POLLING_INTERVAL: '500'
+
+  ipfs:
+    image: ipfs/kubo:v0.31.0
+    ports:
+      - '5001:5001'
+    volumes:
+      - ipfs-data:/data/ipfs
+
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - '5435:5432'
+    command:
+      - postgres
+      - -cshared_preload_libraries=pg_stat_statements
+      - -cmax_connections=200
+    environment:
+      POSTGRES_USER: graph
+      POSTGRES_PASSWORD: graph
+      POSTGRES_DB: graph
+      PGDATA: /var/lib/postgresql/data
+      POSTGRES_INITDB_ARGS: '-E UTF8 --locale=C'
+    # Create a separate database per chain on first boot.
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init-postgres.sh:/docker-entrypoint-initdb.d/init-postgres.sh:ro
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'pg_isready -U graph -d graph_arbitrum && pg_isready -U graph -d graph_base && pg_isready -U graph -d graph_mainnet',
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+
+volumes:
+  ipfs-data:
+  postgres-data:

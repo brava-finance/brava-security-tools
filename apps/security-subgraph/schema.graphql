@@ -1,0 +1,436 @@
+# ----------------------------------------------------------------------------
+# Common shape notes
+# ----------------------------------------------------------------------------
+# Every event-derived entity is immutable. Every id is
+# `keccak256(txHash || logIndex)` (encoded as the raw concatenation bytes) which
+# is globally unique per receipt. Every entity carries blockNumber,
+# blockTimestamp and txHash so the UI can link straight to the block explorer.
+#
+# The schema intentionally duplicates role-change information across two
+# independent sources (Logger-derived *FromLogger and AccessControl-derived
+# *FromAccessControl). The screener's "divergence check" surfaces any
+# mismatch between these two.
+# ----------------------------------------------------------------------------
+
+# --- Fallback / unknown bucket ----------------------------------------------
+
+type AdminVaultEventRaw @entity(immutable: true) {
+  id: Bytes!
+  logId: BigInt!
+  data: Bytes!
+  emitter: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+type UnknownAdminVaultEvent @entity(immutable: true) {
+  id: Bytes!
+  logId: BigInt!
+  data: Bytes!
+  emitter: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+type UnknownActionEvent @entity(immutable: true) {
+  id: Bytes!
+  caller: Bytes!
+  logId: Int!
+  data: Bytes!
+  emitter: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+# --- Enriched aggregate entities (mutable, one row per live id) -------------
+# These are written by the Logger mapping on grant/remove, complementing the
+# per-event entities below. They carry on-chain-resolved metadata
+# (protocolName / actionType / ERC-20 name+symbol) fetched via `try_` calls at
+# index time, so the UI can show human-readable labels without doing RPC work.
+
+type Protocol @entity(immutable: false) {
+  # uint256 protocolId as big-endian bytes. We cannot reverse the keccak of the
+  # name, but the first action granted for this protocol carries protocolName()
+  # which we then attach here. Pools reference this entity for their display
+  # label — it may be unresolved (name == null) until we observe a matching
+  # action grant.
+  id: Bytes!
+  protocolId: BigInt!
+  name: String
+  firstSeenAt: BigInt!
+  firstSeenTx: Bytes!
+}
+
+type Action @entity(immutable: false) {
+  # actionId (bytes4)
+  id: Bytes!
+  actionId: Bytes!
+  actionAddress: Bytes!
+  # Resolved via ActionBase(actionAddress).protocolName() at grant time. Null
+  # if the contract revert or the ABI is incompatible.
+  protocolName: String
+  # Resolved via ActionBase(actionAddress).actionType(). Matches the ActionBase
+  # enum index (0 = DEPOSIT, 1 = WITHDRAW, 2 = SWAP, 3 = COVER, 4 = FEE,
+  # 5 = TRANSFER, 6 = CUSTOM). -1 when the call reverts (AssemblyScript does
+  # not have first-class nullable i32, so we use a sentinel).
+  actionType: Int!
+  # Human-readable name for the enum above, or null.
+  actionTypeName: String
+  # Pre-composed label such as "AaveV3 · DEPOSIT" for direct UI use.
+  displayName: String
+  active: Boolean!
+  grantedAt: BigInt!
+  grantedTx: Bytes!
+  removedAt: BigInt
+  removedTx: Bytes
+}
+
+type Pool @entity(immutable: false) {
+  # concat(protocolId as uint256 hex bytes, poolAddress)
+  id: Bytes!
+  protocolId: BigInt!
+  protocol: Protocol
+  poolAddress: Bytes!
+  # IERC20Metadata(poolAddress).name() / .symbol() / .decimals() at grant time.
+  # Many pools are ERC-4626 or ERC-20-wrapped yield tokens and expose these;
+  # non-ERC-20 pools leave them null.
+  tokenName: String
+  tokenSymbol: String
+  # -1 when the pool does not implement IERC20Metadata.decimals() (sentinel;
+  # AssemblyScript has no nullable i32).
+  tokenDecimals: Int!
+  # Pre-composed label (e.g. "AaveV3 · aArbUSDCn"), or falls back to symbol /
+  # address if metadata is missing.
+  displayName: String
+  active: Boolean!
+  grantedAt: BigInt!
+  grantedTx: Bytes!
+  removedAt: BigInt
+  removedTx: Bytes
+}
+
+type Token @entity(immutable: false) {
+  # token address (lowercased)
+  id: Bytes!
+  token: Bytes!
+  # IERC20Metadata(token).name() / .symbol() / .decimals() resolved at grant
+  # time. Null / -1 if the target does not implement the metadata extension
+  # or was granted before deployment (same pattern as Pool).
+  tokenName: String
+  tokenSymbol: String
+  tokenDecimals: Int!
+  # Pre-composed label ("USDC (USD Coin)" when both resolve, bare symbol or
+  # address otherwise) for direct UI use.
+  displayName: String
+  active: Boolean!
+  grantedAt: BigInt!
+  grantedTx: Bytes!
+  removedAt: BigInt
+  removedTx: Bytes
+}
+
+# --- Action registry (logId 1XX / 2XX / 3XX / 4XX, category 01) -------------
+
+type ActionProposal @entity(immutable: true) {
+  id: Bytes!
+  actionId: Bytes!
+  actionAddress: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+type ActionGrant @entity(immutable: true) {
+  id: Bytes!
+  actionId: Bytes!
+  actionAddress: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+type ActionCancel @entity(immutable: true) {
+  id: Bytes!
+  actionId: Bytes!
+  actionAddress: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+type ActionRemove @entity(immutable: true) {
+  id: Bytes!
+  actionId: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+# --- Pool registry (category 02) --------------------------------------------
+
+type PoolProposal @entity(immutable: true) {
+  id: Bytes!
+  protocolId: BigInt!
+  poolAddress: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+type PoolGrant @entity(immutable: true) {
+  id: Bytes!
+  protocolId: BigInt!
+  poolAddress: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+type PoolCancel @entity(immutable: true) {
+  id: Bytes!
+  protocolId: BigInt!
+  poolAddress: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+type PoolRemove @entity(immutable: true) {
+  id: Bytes!
+  protocolId: BigInt!
+  poolAddress: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+# --- Fee config (category 03) -----------------------------------------------
+
+type FeeProposal @entity(immutable: true) {
+  id: Bytes!
+  recipient: Bytes!
+  minBasis: BigInt!
+  maxBasis: BigInt!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+type FeeGrant @entity(immutable: true) {
+  id: Bytes!
+  recipient: Bytes!
+  minBasis: BigInt!
+  maxBasis: BigInt!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+type FeeCancel @entity(immutable: true) {
+  id: Bytes!
+  recipient: Bytes!
+  minBasis: BigInt!
+  maxBasis: BigInt!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+# --- Role registry: Logger-sourced (category 04) ----------------------------
+
+type RoleProposalFromLogger @entity(immutable: true) {
+  id: Bytes!
+  role: Bytes!
+  roleName: String!
+  account: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+type RoleGrantFromLogger @entity(immutable: true) {
+  id: Bytes!
+  role: Bytes!
+  roleName: String!
+  account: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+type RoleCancelFromLogger @entity(immutable: true) {
+  id: Bytes!
+  role: Bytes!
+  roleName: String!
+  account: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+type RoleRevokeFromLogger @entity(immutable: true) {
+  id: Bytes!
+  role: Bytes!
+  roleName: String!
+  account: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+# --- Role registry: AccessControl-sourced (independent of Logger) -----------
+
+type RoleGrantFromAccessControl @entity(immutable: true) {
+  id: Bytes!
+  role: Bytes!
+  roleName: String!
+  account: Bytes!
+  sender: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+type RoleRevokeFromAccessControl @entity(immutable: true) {
+  id: Bytes!
+  role: Bytes!
+  roleName: String!
+  account: Bytes!
+  sender: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+type RoleAdminChange @entity(immutable: true) {
+  id: Bytes!
+  role: Bytes!
+  roleName: String!
+  previousAdminRole: Bytes!
+  newAdminRole: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+# --- Transaction / token registry (category 06) -----------------------------
+
+type TokenProposal @entity(immutable: true) {
+  id: Bytes!
+  token: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+type TokenGrant @entity(immutable: true) {
+  id: Bytes!
+  token: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+type TokenCancel @entity(immutable: true) {
+  id: Bytes!
+  token: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+type TokenRevoke @entity(immutable: true) {
+  id: Bytes!
+  token: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+# --- Miscellaneous admin-vault events ---------------------------------------
+
+type SafeCreated @entity(immutable: true) {
+  id: Bytes!
+  owner: Bytes!
+  safe: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+type GenericConfigSet @entity(immutable: true) {
+  id: Bytes!
+  protocolName: String!
+  actionType: Int!
+  configAddress: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+type DelayChange @entity(immutable: true) {
+  id: Bytes!
+  oldDelay: BigInt!
+  newDelay: BigInt!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+# --- Safe setup registry (native event + Logger event) ----------------------
+
+type SafeSetupConfigUpdate @entity(immutable: true) {
+  id: Bytes!
+  fallbackHandler: Bytes!
+  modules: [Bytes!]!
+  guard: Bytes!
+  source: String!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+type SafeSetupConfigUpdateFromLogger @entity(immutable: true) {
+  id: Bytes!
+  fallbackHandler: Bytes!
+  modules: [Bytes!]!
+  guard: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+# --- Proxy-level security events --------------------------------------------
+
+type LoggerUpgraded @entity(immutable: true) {
+  id: Bytes!
+  proxy: Bytes!
+  implementation: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+type LoggerProxyAdminChanged @entity(immutable: true) {
+  id: Bytes!
+  proxy: Bytes!
+  previousAdmin: Bytes!
+  newAdmin: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+type ProxyAdminOwnershipTransferred @entity(immutable: true) {
+  id: Bytes!
+  proxyAdmin: Bytes!
+  role: String! # 'LoggerProxyAdmin' | 'SafeDeploymentProxyAdmin'
+  previousOwner: Bytes!
+  newOwner: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}

@@ -1,0 +1,6 @@
+packages:
+  - apps/*
+  # security-subgraph is intentionally excluded from the workspace:
+  # `graph codegen` conflicts with pnpm's hoisted node_modules, so the
+  # subgraph package has to run its own `pnpm install` in-place.
+  - '!apps/security-subgraph'

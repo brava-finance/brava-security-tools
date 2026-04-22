@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+generated/
+*.tsbuildinfo
+.turbo/
+
+# Subgraph generated manifest (rendered from subgraph.template.yaml + networks.json)
+apps/security-subgraph/subgraph.yaml
+
+# Env files — never commit real RPC keys or Studio deploy keys
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# IDE / OS
+.DS_Store
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*

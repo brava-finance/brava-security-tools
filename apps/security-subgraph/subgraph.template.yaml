@@ -1,0 +1,319 @@
+specVersion: 1.0.0
+description: "Brava Security Screener — immutable audit feed of Logger events, AdminVault state, proxy upgrades and proxy-admin ownership changes on {{ network }}."
+indexerHints:
+  prune: never
+schema:
+  file: ./schema.graphql
+dataSources:
+  # The Logger proxy emits every protocol-level admin and action event. We index
+  # the proxy address directly so history survives an implementation upgrade.
+  - kind: ethereum
+    name: Logger
+    network: {{ graphNetwork }}
+    source:
+      address: '{{ Logger.address }}'
+      abi: Logger
+      startBlock: {{ Logger.startBlock }}
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - AdminVaultEventRaw
+        - ActionProposal
+        - ActionGrant
+        - ActionCancel
+        - ActionRemove
+        - PoolProposal
+        - PoolGrant
+        - PoolCancel
+        - PoolRemove
+        - FeeProposal
+        - FeeGrant
+        - FeeCancel
+        - RoleProposalFromLogger
+        - RoleGrantFromLogger
+        - RoleCancelFromLogger
+        - RoleRevokeFromLogger
+        - TokenProposal
+        - TokenGrant
+        - TokenCancel
+        - TokenRevoke
+        - SafeSetupConfigUpdateFromLogger
+        - SafeCreated
+        - GenericConfigSet
+        - DelayChange
+        - UnknownAdminVaultEvent
+        - UnknownActionEvent
+        - Action
+        - Pool
+        - Protocol
+        - Token
+      abis:
+        - name: Logger
+          file: ./abis/Logger.json
+        # Called via `try_` bindings from aggregate upserts — lets us resolve
+        # protocolName()/actionType() on granted action implementations and
+        # name()/symbol()/decimals() on granted pool + token addresses.
+        - name: ActionBase
+          file: ./abis/ActionBase.json
+        - name: IERC20Metadata
+          file: ./abis/IERC20Metadata.json
+      eventHandlers:
+        - event: AdminVaultEvent(uint256,bytes)
+          handler: handleAdminVaultEvent
+        - event: ActionEvent(address,uint8,bytes)
+          handler: handleActionEvent
+      file: ./src/logger.ts
+
+  # Indexing the same address again as TransparentUpgradeableProxy lets us catch
+  # `Upgraded(address)` and `AdminChanged(address,address)` — the single most
+  # important signal for the screener, because swapping the implementation is
+  # the most realistic way to silently disable admin event emission.
+  - kind: ethereum
+    name: LoggerProxy
+    network: {{ graphNetwork }}
+    source:
+      address: '{{ LoggerProxy.address }}'
+      abi: ITransparentUpgradeableProxy
+      startBlock: {{ LoggerProxy.startBlock }}
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - LoggerUpgraded
+        - LoggerProxyAdminChanged
+      abis:
+        - name: ITransparentUpgradeableProxy
+          file: ./abis/ITransparentUpgradeableProxy.json
+      eventHandlers:
+        - event: Upgraded(indexed address)
+          handler: handleLoggerUpgraded
+        - event: AdminChanged(address,address)
+          handler: handleLoggerAdminChanged
+      file: ./src/loggerProxy.ts
+
+  # ProxyAdmin owner rotations must also be visible — whoever owns this
+  # controls the logger implementation.
+  - kind: ethereum
+    name: LoggerProxyAdmin
+    network: {{ graphNetwork }}
+    source:
+      address: '{{ LoggerProxyAdmin.address }}'
+      abi: IProxyAdmin
+      startBlock: {{ LoggerProxyAdmin.startBlock }}
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - ProxyAdminOwnershipTransferred
+      abis:
+        - name: IProxyAdmin
+          file: ./abis/IProxyAdmin.json
+      eventHandlers:
+        - event: OwnershipTransferred(indexed address,indexed address)
+          handler: handleProxyAdminOwnershipTransferred
+      file: ./src/proxyAdmin.ts
+{{#hasSafeDeploymentProxyAdmin}}
+
+  # On mainnet the safe-deployment proxy uses a separate ProxyAdmin. Index it
+  # too so the screener has one unified view of "who can upgrade what".
+  - kind: ethereum
+    name: SafeDeploymentProxyAdmin
+    network: {{ graphNetwork }}
+    source:
+      address: '{{ SafeDeploymentProxyAdmin.address }}'
+      abi: IProxyAdmin
+      startBlock: {{ SafeDeploymentProxyAdmin.startBlock }}
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - ProxyAdminOwnershipTransferred
+      abis:
+        - name: IProxyAdmin
+          file: ./abis/IProxyAdmin.json
+      eventHandlers:
+        - event: OwnershipTransferred(indexed address,indexed address)
+          handler: handleSafeDeploymentProxyAdminOwnershipTransferred
+      file: ./src/proxyAdmin.ts
+{{/hasSafeDeploymentProxyAdmin}}
+
+  # AdminVault extends OpenZeppelin AccessControl which emits its own canonical
+  # role events. We index them independently of the Logger so the screener can
+  # cross-check the two sources and flag any divergence (e.g. Logger has been
+  # swapped to a silent implementation but OZ events still fire).
+  - kind: ethereum
+    name: AdminVault
+    network: {{ graphNetwork }}
+    source:
+      address: '{{ AdminVault.address }}'
+      abi: IAccessControl
+      startBlock: {{ AdminVault.startBlock }}
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - RoleGrantFromAccessControl
+        - RoleRevokeFromAccessControl
+        - RoleAdminChange
+      abis:
+        - name: IAccessControl
+          file: ./abis/IAccessControl.json
+      eventHandlers:
+        - event: RoleGranted(indexed bytes32,indexed address,indexed address)
+          handler: handleRoleGrantedFromAccessControl
+        - event: RoleRevoked(indexed bytes32,indexed address,indexed address)
+          handler: handleRoleRevokedFromAccessControl
+        - event: RoleAdminChanged(indexed bytes32,indexed bytes32,indexed bytes32)
+          handler: handleRoleAdminChangedFromAccessControl
+      file: ./src/adminVault.ts
+
+  # SafeSetupRegistry emits a native `CurrentConfigurationUpdated` event in
+  # addition to logging through Logger. Indexing directly gives us an
+  # event source that cannot be silenced by upgrading the Logger.
+  - kind: ethereum
+    name: SafeSetupRegistry
+    network: {{ graphNetwork }}
+    source:
+      address: '{{ SafeSetupRegistry.address }}'
+      abi: ISafeSetupRegistry
+      startBlock: {{ SafeSetupRegistry.startBlock }}
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - SafeSetupConfigUpdate
+      abis:
+        - name: ISafeSetupRegistry
+          file: ./abis/ISafeSetupRegistry.json
+      eventHandlers:
+        - event: CurrentConfigurationUpdated(address,address[],address)
+          handler: handleCurrentConfigurationUpdated
+      file: ./src/safeSetupRegistry.ts
+{{#hasLoggerLegacyV1}}
+
+  - kind: ethereum
+    name: LoggerLegacyV1
+    network: {{ graphNetwork }}
+    source:
+      address: '{{ LoggerLegacyV1.address }}'
+      abi: Logger
+      startBlock: {{ LoggerLegacyV1.startBlock }}
+      endBlock: {{ LoggerLegacyV1.endBlock }}
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - AdminVaultEventRaw
+        - UnknownAdminVaultEvent
+        # The legacy loggers share ./src/logger.ts and therefore the same
+        # aggregate upsert paths; declare the full write-set here too so the
+        # indexer accepts writes triggered from legacy events.
+        - ActionProposal
+        - ActionGrant
+        - ActionCancel
+        - ActionRemove
+        - PoolProposal
+        - PoolGrant
+        - PoolCancel
+        - PoolRemove
+        - FeeProposal
+        - FeeGrant
+        - FeeCancel
+        - RoleProposalFromLogger
+        - RoleGrantFromLogger
+        - RoleCancelFromLogger
+        - RoleRevokeFromLogger
+        - TokenProposal
+        - TokenGrant
+        - TokenCancel
+        - TokenRevoke
+        - SafeSetupConfigUpdateFromLogger
+        - SafeCreated
+        - GenericConfigSet
+        - DelayChange
+        - UnknownActionEvent
+        - Action
+        - Pool
+        - Protocol
+        - Token
+      abis:
+        - name: Logger
+          file: ./abis/Logger.json
+        - name: ActionBase
+          file: ./abis/ActionBase.json
+        - name: IERC20Metadata
+          file: ./abis/IERC20Metadata.json
+      eventHandlers:
+        - event: AdminVaultEvent(uint256,bytes)
+          handler: handleAdminVaultEvent
+        - event: ActionEvent(address,uint8,bytes)
+          handler: handleActionEvent
+      file: ./src/logger.ts
+{{/hasLoggerLegacyV1}}
+{{#hasLoggerLegacyV2}}
+
+  - kind: ethereum
+    name: LoggerLegacyV2
+    network: {{ graphNetwork }}
+    source:
+      address: '{{ LoggerLegacyV2.address }}'
+      abi: Logger
+      startBlock: {{ LoggerLegacyV2.startBlock }}
+      endBlock: {{ LoggerLegacyV2.endBlock }}
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - AdminVaultEventRaw
+        - UnknownAdminVaultEvent
+        - ActionProposal
+        - ActionGrant
+        - ActionCancel
+        - ActionRemove
+        - PoolProposal
+        - PoolGrant
+        - PoolCancel
+        - PoolRemove
+        - FeeProposal
+        - FeeGrant
+        - FeeCancel
+        - RoleProposalFromLogger
+        - RoleGrantFromLogger
+        - RoleCancelFromLogger
+        - RoleRevokeFromLogger
+        - TokenProposal
+        - TokenGrant
+        - TokenCancel
+        - TokenRevoke
+        - SafeSetupConfigUpdateFromLogger
+        - SafeCreated
+        - GenericConfigSet
+        - DelayChange
+        - UnknownActionEvent
+        - Action
+        - Pool
+        - Protocol
+        - Token
+      abis:
+        - name: Logger
+          file: ./abis/Logger.json
+        - name: ActionBase
+          file: ./abis/ActionBase.json
+        - name: IERC20Metadata
+          file: ./abis/IERC20Metadata.json
+      eventHandlers:
+        - event: AdminVaultEvent(uint256,bytes)
+          handler: handleAdminVaultEvent
+        - event: ActionEvent(address,uint8,bytes)
+          handler: handleActionEvent
+      file: ./src/logger.ts
+{{/hasLoggerLegacyV2}}

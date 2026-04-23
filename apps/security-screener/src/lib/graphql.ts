@@ -1,4 +1,4 @@
-import { resolveSubgraphUrl, type ChainId } from './config';
+import { resolveGraphApiKey, resolveSubgraphUrl, type ChainId } from './config';
 
 export class SubgraphError extends Error {
   constructor(
@@ -23,10 +23,18 @@ export async function gqlRequest<T>(
   signal?: AbortSignal
 ): Promise<T> {
   const url = resolveSubgraphUrl(chain);
+  const apiKey = resolveGraphApiKey();
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  // Graph Studio endpoints accept anonymous reads, so only send the
+  // Authorization header when a key is actually configured. This keeps local
+  // dev against the docker-compose graph-node or against Studio working
+  // without a key.
+  if (apiKey.length > 0) headers.Authorization = `Bearer ${apiKey}`;
 
   const init: RequestInit = {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ query, variables }),
   };
   if (signal !== undefined) init.signal = signal;

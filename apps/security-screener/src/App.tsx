@@ -25,7 +25,7 @@ export function App() {
           <div className='min-w-0 flex-1'>
             <div className='flex flex-wrap items-center gap-3'>
               <img
-                src='/logos/brava-full-dark-mode.svg'
+                src={`${import.meta.env.BASE_URL}logos/brava-full-dark-mode.svg`}
                 alt='Brava'
                 width={203}
                 height={32}

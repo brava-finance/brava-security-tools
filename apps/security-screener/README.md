@@ -23,14 +23,19 @@ The screener deliberately avoids every large dependency (no Radix, no framer-mot
 
 ```bash
 pnpm install
-cp apps/security-screener/.env.example apps/security-screener/.env.local
-# Fill in the Studio endpoints for each chain.
 pnpm --filter @brava/security-screener dev
 ```
 
 Then open <http://localhost:5180>.
 
-You can also override subgraph endpoints at runtime (useful for IPFS pins that should be repointable without a rebuild):
+The production Graph Network gateway URLs and a matching API key are
+hardcoded in `src/lib/config.ts`, so `dev` and `build` work out of the box
+with no env configuration. If you want to point a chain at your own
+graph-node or use a personal throwaway API key instead of the shared one,
+copy `.env.example` to `.env.local` and uncomment the relevant vars.
+
+You can also override subgraph endpoints and the API key at runtime — useful
+for IPFS pins that should be repointable without a rebuild:
 
 ```html
 <script>
@@ -38,6 +43,7 @@ You can also override subgraph endpoints at runtime (useful for IPFS pins that s
     subgraphs: {
       arbitrum: 'https://my-own-node.example/subgraphs/name/brava-security-arbitrum',
     },
+    graphApiKey: 'my-personal-key',
   };
 </script>
 ```
@@ -138,11 +144,17 @@ Uploading the unpacked `dist/` directory to any of these will also usually produ
 
 Anything baked into the bundle must be purely a function of the release commit, otherwise reviewers cannot reproduce it with just `git checkout <commit>`. The workflow sets `VITE_BUILD_TIME` to `git show -s --format=%cI HEAD`, so the attestation is stable for everyone.
 
-### Why the subgraph URLs are hardcoded, not env-driven
+### Why the subgraph URLs and the Graph API key are hardcoded
 
-Graph Studio endpoints are public and the screener's reproducibility depends on the bundle being a function of the commit alone. If `VITE_SUBGRAPH_*` were set during a release build, reviewers would need the same values to reproduce the bundle — that's an extra piece of trust for no gain.
+The screener's reproducibility depends on the bundle being a pure function of the release commit. Anything env-driven at build time would force reviewers to discover and match those values out-of-band, which is pointless trust overhead.
 
-Instead, the canonical URLs live in `src/lib/config.ts`. The `VITE_SUBGRAPH_*` env vars are still honored at build time so local devs can point specific chains at a different graph-node, but the release workflow explicitly refuses to build if any of them leak into the runner. For IPFS pins that need to be repointable without a rebuild (e.g. to fall over to a mirror), use the runtime override:
+So both the canonical Graph Network gateway URLs **and** the gateway API key live in `src/lib/config.ts`. The API key is public by design:
+
+- It is domain-allow-listed in Graph Studio to the hosts we serve the screener from (+ a handful of public IPFS gateways).
+- It has a monthly spending cap.
+- If it gets abused anyway, we rotate by committing a new value and cutting a new release.
+
+The `VITE_SUBGRAPH_*` and `VITE_GRAPH_API_KEY` env vars are still honored at build time so local devs can override either, but the release workflow explicitly refuses to build if any unexpected `VITE_*` var leaks into the runner. For IPFS pins that need to be repointable without a rebuild (e.g. to fall over to a mirror or swap in a different key), use the runtime override:
 
 ```html
 <script>
@@ -150,6 +162,7 @@ Instead, the canonical URLs live in `src/lib/config.ts`. The `VITE_SUBGRAPH_*` e
     subgraphs: {
       arbitrum: 'https://my-own-node.example/subgraphs/name/brava-security-arbitrum',
     },
+    graphApiKey: 'my-own-key',
   };
 </script>
 ```

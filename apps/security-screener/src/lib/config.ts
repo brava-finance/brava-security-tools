@@ -36,11 +36,18 @@ const fallback = (envKey: string, hardcoded: string): string => {
   return value;
 };
 
-// The production Graph Studio endpoints below are the canonical, public read
-// endpoints for the three Brava security subgraphs (studio slug owner 89709).
+// The URLs below are the canonical, public read endpoints on the Graph
+// Network decentralized gateway for the three Brava security subgraphs.
 // They are hardcoded on purpose: the screener is designed to be reproducible
 // from the commit alone, so baking environment-dependent URLs would break
 // that property.
+//
+// The Graph Network gateway requires an API key on every request (see
+// `GRAPH_API_KEY` below). The key is baked into the bundle as well, so that
+// a walk-up visitor to the IPFS pin can query the subgraphs without any
+// out-of-band configuration. This is deliberate — the key is public by
+// design, and is expected to be domain-allow-listed + spend-capped in Graph
+// Studio to make public distribution safe.
 //
 // For local development against a different endpoint (e.g. the docker-compose
 // graph-node stack, or a privately-deployed subgraph), set the matching
@@ -67,7 +74,7 @@ export const CHAINS: Record<ChainId, ChainConfig> = {
     },
     subgraphUrl: fallback(
       'VITE_SUBGRAPH_ARBITRUM',
-      'https://api.studio.thegraph.com/query/89709/brava-security-arbitrum/version/latest'
+      'https://gateway.thegraph.com/api/subgraphs/id/9bFHQSS7GEHSUK6RtAzqRbzboN7c5AV4x3mTpHvwM4hH'
     ),
   },
   base: {
@@ -86,7 +93,7 @@ export const CHAINS: Record<ChainId, ChainConfig> = {
     },
     subgraphUrl: fallback(
       'VITE_SUBGRAPH_BASE',
-      'https://api.studio.thegraph.com/query/89709/brava-security-base/version/latest'
+      'https://gateway.thegraph.com/api/subgraphs/id/JAJazEVcRxPzk5YLU1x38Gu4wo9L1aM8D2tAbHnQNYFE'
     ),
   },
   mainnet: {
@@ -106,10 +113,31 @@ export const CHAINS: Record<ChainId, ChainConfig> = {
     },
     subgraphUrl: fallback(
       'VITE_SUBGRAPH_MAINNET',
-      'https://api.studio.thegraph.com/query/89709/brava-security-ethereum/version/latest'
+      'https://gateway.thegraph.com/api/subgraphs/id/ARRJqr8Jsm1mVe8t2JeX9y98QBpkR93HW245wystrBj7'
     ),
   },
 };
+
+// Public Graph Network API key. This key is intentionally committed to the
+// repository and baked into the shipped bundle — the gateway requires an
+// Authorization header on every request, and there is no practical way to
+// distribute a static IPFS bundle that can query the gateway without
+// embedding the key somewhere the browser can read it.
+//
+// Safety assumptions:
+//   - The key is domain-allow-listed in Graph Studio to brava.finance hosts
+//     (and public IPFS gateways we care about).
+//   - The key has a monthly spending cap configured in Graph Studio.
+//   - If the key is abused anyway, rotate it by committing a new value here
+//     and cutting a new release.
+//
+// For local development you can override this with `VITE_GRAPH_API_KEY` in
+// `.env.local` (e.g. a throwaway personal key), or at runtime via
+// `window.__BRAVA_SCREENER__.graphApiKey` on an IPFS pin.
+export const GRAPH_API_KEY: string = fallback(
+  'VITE_GRAPH_API_KEY',
+  '80fa4996f4472d9f285d197cb48666b2'
+);
 
 export const CHAIN_ORDER: ChainId[] = ['arbitrum', 'base', 'mainnet'];
 
@@ -158,6 +186,7 @@ export function chainsForView(view: ViewId): ChainId[] {
 
 export interface RuntimeOverride {
   subgraphs?: Partial<Record<ChainId, string>>;
+  graphApiKey?: string;
 }
 
 declare global {
@@ -171,4 +200,11 @@ export function resolveSubgraphUrl(chain: ChainId): string {
     typeof window === 'undefined' ? undefined : window.__BRAVA_SCREENER__?.subgraphs?.[chain];
   if (override !== undefined && override.length > 0) return override;
   return CHAINS[chain].subgraphUrl;
+}
+
+export function resolveGraphApiKey(): string {
+  const override =
+    typeof window === 'undefined' ? undefined : window.__BRAVA_SCREENER__?.graphApiKey;
+  if (override !== undefined && override.length > 0) return override;
+  return GRAPH_API_KEY;
 }

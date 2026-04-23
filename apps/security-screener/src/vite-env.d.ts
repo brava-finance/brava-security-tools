@@ -7,7 +7,6 @@ interface ImportMetaEnv {
   readonly VITE_BUILD_COMMIT?: string;
   readonly VITE_BUILD_TIME?: string;
   readonly VITE_BUNDLE_HASH?: string;
-  readonly VITE_IPFS_CID?: string;
 }
 
 interface ImportMeta {

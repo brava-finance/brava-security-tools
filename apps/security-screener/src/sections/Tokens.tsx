@@ -1,19 +1,20 @@
 import { useMemo } from 'react';
 
 import { Card } from '../components/Card';
-import { Empty, ErrorPane, Loading } from '../components/DataState';
+import { ChainBadge } from '../components/ChainBadge';
+import { Empty, ErrorPane, Loading, PartialWarning } from '../components/DataState';
 import { AddressLink, TxLink } from '../components/ExplorerLink';
-import { Tag } from '../components/Tag';
 import { Table } from '../components/Table';
 import type { Column } from '../components/Table';
-import { useDashboardData } from '../hooks/useSubgraphData';
-import { CHAINS, type ChainId } from '../lib/config';
-import { deriveTokens } from '../lib/derive';
-import type { DerivedEntry, TokenMeta } from '../lib/derive';
+import { Tag } from '../components/Tag';
+import { useMultiDashboardData } from '../hooks/useSubgraphData';
+import { CHAINS, type ViewId } from '../lib/config';
+import { deriveTokens, tagChain } from '../lib/derive';
+import type { ChainTagged, DerivedEntry, TokenMeta } from '../lib/derive';
 import { formatRelative, formatTimestamp } from '../lib/format';
 
 interface Props {
-  chain: ChainId;
+  view: ViewId;
 }
 
 // ActionBase / SendToken use this sentinel to mean "native gas token".
@@ -25,10 +26,6 @@ function isNativeGasToken(address: string): boolean {
   return address.toLowerCase() === NATIVE_GAS_SENTINEL;
 }
 
-// Token is flagged for review if name/symbol/decimals weren't resolvable at
-// grant time (non-ERC20 contract, no code, or reverting). The native-gas
-// sentinel is deliberately excluded — it always fails IERC20Metadata and is
-// expected to be unresolved.
 function incompleteReasonForToken(meta: TokenMeta): string | undefined {
   if (isNativeGasToken(meta.token)) return undefined;
   const missing: string[] = [];
@@ -42,30 +39,49 @@ function incompleteReasonForToken(meta: TokenMeta): string | undefined {
 const INCOMPLETE_ROW_CLASS =
   'bg-[color-mix(in_srgb,var(--color-warn)_8%,transparent)] hover:bg-[color-mix(in_srgb,var(--color-warn)_14%,transparent)]';
 
-export function Tokens({ chain }: Props) {
-  const chainCfg = CHAINS[chain];
-  const query = useDashboardData(chain);
+export function Tokens({ view }: Props) {
+  const query = useMultiDashboardData(view);
+  const isMulti = view === 'all';
 
-  const rows = useMemo<Array<DerivedEntry<TokenMeta>>>(() => {
-    if (query.data === undefined) return [];
-    return deriveTokens(query.data)
-      .filter((e) => e.status === 'active')
-      .sort((a, b) => {
-        const aLabel = (a.meta.tokenSymbol ?? a.meta.tokenName ?? a.meta.token).toLowerCase();
-        const bLabel = (b.meta.tokenSymbol ?? b.meta.tokenName ?? b.meta.token).toLowerCase();
-        if (aLabel !== bLabel) return aLabel.localeCompare(bLabel);
-        return Number(b.grantedAt ?? 0) - Number(a.grantedAt ?? 0);
-      });
-  }, [query.data]);
+  const rows = useMemo<Array<ChainTagged<DerivedEntry<TokenMeta>>>>(() => {
+    const out: Array<ChainTagged<DerivedEntry<TokenMeta>>> = [];
+    for (const { chain, data } of query.chains) {
+      const active = deriveTokens(data).filter((e) => e.status === 'active');
+      for (const e of tagChain(chain, active)) out.push(e);
+    }
+    return out.sort((a, b) => {
+      const aLabel = (a.meta.tokenSymbol ?? a.meta.tokenName ?? a.meta.token).toLowerCase();
+      const bLabel = (b.meta.tokenSymbol ?? b.meta.tokenName ?? b.meta.token).toLowerCase();
+      if (aLabel !== bLabel) return aLabel.localeCompare(bLabel);
+      if (a.chain !== b.chain) return a.chain.localeCompare(b.chain);
+      return Number(b.grantedAt ?? 0) - Number(a.grantedAt ?? 0);
+    });
+  }, [query.chains]);
 
-  if (query.isLoading) return <Loading label='Fetching active tokens…' />;
-  if (query.error !== null) return <ErrorPane error={query.error} />;
-  if (query.data === undefined) return <Empty>No data returned from subgraph.</Empty>;
+  if (query.chains.length === 0 && query.isLoading) {
+    return <Loading label='Fetching active tokens…' />;
+  }
+  if (query.chains.length === 0 && query.error !== null) return <ErrorPane error={query.error} />;
+  if (query.chains.length === 0) return <Empty>No data returned from subgraph.</Empty>;
 
   const reviewCount = rows.filter((r) => incompleteReasonForToken(r.meta) !== undefined).length;
-  const reviewBadge = reviewCount > 0 ? <Tag variant='warn'>{reviewCount} need review</Tag> : null;
+  const actions = (
+    <div className='flex items-center gap-2'>
+      {query.isPartial && <PartialWarning />}
+      {reviewCount > 0 && <Tag variant='warn'>{reviewCount} need review</Tag>}
+    </div>
+  );
 
   const columns: Array<Column<(typeof rows)[number]>> = [
+    ...(isMulti
+      ? [
+          {
+            key: 'chain',
+            header: 'Chain',
+            render: (r: (typeof rows)[number]) => <ChainBadge chain={r.chain} variant='short' />,
+          } satisfies Column<(typeof rows)[number]>,
+        ]
+      : []),
     {
       key: 'symbol',
       header: 'Symbol',
@@ -113,11 +129,11 @@ export function Tokens({ chain }: Props) {
     {
       key: 'token',
       header: 'Address',
-      render: (r) => <AddressLink chain={chainCfg} address={r.meta.token} />,
+      render: (r) => <AddressLink chain={CHAINS[r.chain]} address={r.meta.token} />,
     },
     {
       key: 'at',
-      header: 'Granted at',
+      header: 'Granted',
       render: (r) =>
         r.grantedAt === undefined ? (
           <span className='text-[var(--color-text-faint)]'>—</span>
@@ -130,7 +146,7 @@ export function Tokens({ chain }: Props) {
       header: 'Tx',
       render: (r) =>
         r.grantedTx !== undefined ? (
-          <TxLink chain={chainCfg} txHash={r.grantedTx} />
+          <TxLink chain={CHAINS[r.chain]} txHash={r.grantedTx} />
         ) : (
           <span className='text-[var(--color-text-faint)]'>—</span>
         ),
@@ -141,7 +157,8 @@ export function Tokens({ chain }: Props) {
     <Card
       title={`Active tokens (${rows.length})`}
       subtitle='Tokens approved in the transaction registry — any not listed here cannot be moved through AdminVault-mediated transactions. Rows highlighted in amber are missing on-chain metadata and should be reviewed.'
-      actions={reviewBadge}
+      actions={actions}
+      dense
     >
       <Table
         columns={columns}

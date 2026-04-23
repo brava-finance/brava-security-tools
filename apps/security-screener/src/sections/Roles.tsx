@@ -1,25 +1,27 @@
 import { useMemo } from 'react';
 
 import { Card } from '../components/Card';
-import { Empty, ErrorPane, Loading } from '../components/DataState';
+import { ChainBadge } from '../components/ChainBadge';
+import { Empty, ErrorPane, Loading, PartialWarning } from '../components/DataState';
 import { AddressLink, TxLink } from '../components/ExplorerLink';
 import { Table } from '../components/Table';
 import type { Column } from '../components/Table';
 import { Tag } from '../components/Tag';
-import { useDashboardData, useDivergenceData } from '../hooks/useSubgraphData';
-import { CHAINS, type ChainId } from '../lib/config';
+import { useMultiDashboardData, useMultiDivergenceData } from '../hooks/useSubgraphData';
+import { CHAINS, type ChainId, type ViewId } from '../lib/config';
 import { deriveRolesFromAccessControl, deriveRolesFromLogger } from '../lib/derive';
 import type { DerivedEntry, RoleMeta } from '../lib/derive';
 import { formatRelative, formatTimestamp, shortAddress } from '../lib/format';
 
 interface Props {
-  chain: ChainId;
+  view: ViewId;
 }
 
 type GrantSource = 'delayed' | 'direct';
 
 interface MemberRow {
   key: string;
+  chain: ChainId;
   account: string;
   grantedAt?: string;
   grantedBy?: string;
@@ -33,85 +35,93 @@ interface RoleGroup {
   members: MemberRow[];
 }
 
-export function Roles({ chain }: Props) {
-  const chainCfg = CHAINS[chain];
-  const dashboard = useDashboardData(chain);
-  const divergence = useDivergenceData(chain);
+export function Roles({ view }: Props) {
+  const dashboard = useMultiDashboardData(view);
+  const divergence = useMultiDivergenceData(view);
+  const isMulti = view === 'all';
 
   const groups = useMemo<RoleGroup[]>(() => {
-    if (divergence.data === undefined) return [];
+    if (divergence.chains.length === 0) return [];
 
-    // Index Logger-derived role entries by (role, account) so we can flag
-    // members whose grant also flowed through the delay-protected Logger
-    // pipeline (vs constructor/direct grants that bypass it).
-    const loggerByKey = new Map<string, DerivedEntry<RoleMeta>>();
-    if (dashboard.data !== undefined) {
-      for (const e of deriveRolesFromLogger(dashboard.data)) loggerByKey.set(e.key, e);
+    // Build a per-chain Logger index so we can flag grants that also flowed
+    // through the delay-protected Logger pipeline.
+    const loggerByChainAndKey = new Map<string, DerivedEntry<RoleMeta>>();
+    for (const { chain, data } of dashboard.chains) {
+      for (const e of deriveRolesFromLogger(data)) {
+        loggerByChainAndKey.set(`${chain}:${e.key}`, e);
+      }
     }
 
-    const active = deriveRolesFromAccessControl(divergence.data).filter(
-      (e) => e.status === 'active'
-    );
-
-    // Group by role hash; keep the most human-friendly roleName we see.
+    // Collapse (role, account) across chains into one group. Members are
+    // chain-tagged so the UI can render a row per chain.
     const byRole = new Map<string, RoleGroup>();
-    for (const e of active) {
-      const key = e.meta.role.toLowerCase();
-      const existing = byRole.get(key);
-      const group: RoleGroup =
-        existing ??
-        ({
+    for (const { chain, data } of divergence.chains) {
+      const active = deriveRolesFromAccessControl(data).filter((e) => e.status === 'active');
+      for (const e of active) {
+        const key = e.meta.role.toLowerCase();
+        const group: RoleGroup = byRole.get(key) ?? {
           role: e.meta.role,
           roleName: e.meta.roleName,
           members: [],
-        } satisfies RoleGroup);
+        };
 
-      const log = loggerByKey.get(e.key);
-      const member: MemberRow = {
-        key: e.key,
-        account: e.meta.account,
-        // Prefer the Logger-observed grant timestamp (the delay-protected
-        // moment of grant) when available; fall back to the AC event.
-        ...((log?.grantedAt ?? e.lastEventAt) !== undefined
-          ? { grantedAt: log?.grantedAt ?? e.lastEventAt }
-          : {}),
-        ...((log?.grantedTx ?? e.lastEventTx) !== undefined
-          ? { grantedTx: log?.grantedTx ?? e.lastEventTx }
-          : {}),
-        ...(e.meta.sender !== undefined ? { grantedBy: e.meta.sender } : {}),
-        source: log?.status === 'active' ? 'delayed' : 'direct',
-      };
-      group.members.push(member);
-      byRole.set(key, group);
+        const log = loggerByChainAndKey.get(`${chain}:${e.key}`);
+        const member: MemberRow = {
+          key: `${chain}:${e.key}`,
+          chain,
+          account: e.meta.account,
+          ...((log?.grantedAt ?? e.lastEventAt) !== undefined
+            ? { grantedAt: log?.grantedAt ?? e.lastEventAt }
+            : {}),
+          ...((log?.grantedTx ?? e.lastEventTx) !== undefined
+            ? { grantedTx: log?.grantedTx ?? e.lastEventTx }
+            : {}),
+          ...(e.meta.sender !== undefined ? { grantedBy: e.meta.sender } : {}),
+          source: log?.status === 'active' ? 'delayed' : 'direct',
+        };
+        group.members.push(member);
+        byRole.set(key, group);
+      }
     }
 
-    // Sort members inside each group by account for stable rendering, then
-    // sort groups by roleName so the UI has a predictable top-to-bottom order.
     const out = Array.from(byRole.values());
     for (const g of out) {
-      g.members.sort((a, b) => a.account.localeCompare(b.account));
+      g.members.sort((a, b) => {
+        if (a.account !== b.account) return a.account.localeCompare(b.account);
+        return a.chain.localeCompare(b.chain);
+      });
     }
     out.sort((a, b) => a.roleName.localeCompare(b.roleName));
     return out;
-  }, [dashboard.data, divergence.data]);
+  }, [dashboard.chains, divergence.chains]);
 
   const totalMembers = useMemo(
     () => groups.reduce((sum, g) => sum + g.members.length, 0),
     [groups]
   );
 
-  const isLoading = dashboard.isLoading || divergence.isLoading;
+  const anyLoading = dashboard.isLoading || divergence.isLoading;
+  const anyData = dashboard.chains.length > 0 || divergence.chains.length > 0;
   const error = dashboard.error ?? divergence.error;
 
-  if (isLoading) return <Loading label='Fetching role membership…' />;
-  if (error !== null) return <ErrorPane error={error} />;
-  if (divergence.data === undefined) return <Empty>No data returned from subgraph.</Empty>;
+  if (!anyData && anyLoading) return <Loading label='Fetching role membership…' />;
+  if (!anyData && error !== null) return <ErrorPane error={error} />;
+  if (divergence.chains.length === 0) return <Empty>No data returned from subgraph.</Empty>;
 
   const columns: Array<Column<MemberRow>> = [
+    ...(isMulti
+      ? [
+          {
+            key: 'chain',
+            header: 'Chain',
+            render: (r: MemberRow) => <ChainBadge chain={r.chain} variant='short' />,
+          } satisfies Column<MemberRow>,
+        ]
+      : []),
     {
       key: 'account',
       header: 'Account',
-      render: (r) => <AddressLink chain={chainCfg} address={r.account} />,
+      render: (r) => <AddressLink chain={CHAINS[r.chain]} address={r.account} />,
     },
     {
       key: 'source',
@@ -132,14 +142,14 @@ export function Roles({ chain }: Props) {
       header: 'Granted by',
       render: (r) =>
         r.grantedBy !== undefined ? (
-          <AddressLink chain={chainCfg} address={r.grantedBy} />
+          <AddressLink chain={CHAINS[r.chain]} address={r.grantedBy} />
         ) : (
           <span className='text-[var(--color-text-faint)]'>—</span>
         ),
     },
     {
       key: 'grantedAt',
-      header: 'Granted at',
+      header: 'Granted',
       render: (r) =>
         r.grantedAt === undefined ? (
           <span className='text-[var(--color-text-faint)]'>—</span>
@@ -152,7 +162,7 @@ export function Roles({ chain }: Props) {
       header: 'Tx',
       render: (r) =>
         r.grantedTx !== undefined ? (
-          <TxLink chain={chainCfg} txHash={r.grantedTx} />
+          <TxLink chain={CHAINS[r.chain]} txHash={r.grantedTx} />
         ) : (
           <span className='text-[var(--color-text-faint)]'>—</span>
         ),
@@ -162,21 +172,24 @@ export function Roles({ chain }: Props) {
   return (
     <div className='grid gap-4'>
       <div className='flex flex-wrap items-center justify-between gap-3'>
-        <p className='text-xs text-[var(--color-text-muted)]'>
+        <p className='text-xs leading-relaxed text-[var(--color-text-muted)]'>
           Current role membership on the AdminVault, sourced from OpenZeppelin AccessControl events
           (on-chain ground truth). Grants that also passed through the Logger's delay-protected
           pipeline are tagged <Tag variant='ok'>delay-protected</Tag>; grants that bypass the Logger
           (constructor initialisation, direct admin grants) are tagged{' '}
           <Tag variant='warn'>direct</Tag>.
         </p>
-        <Tag variant='accent'>
-          {groups.length} role{groups.length === 1 ? '' : 's'} · {totalMembers} member
-          {totalMembers === 1 ? '' : 's'}
-        </Tag>
+        <div className='flex items-center gap-2'>
+          {(dashboard.isPartial || divergence.isPartial) && <PartialWarning />}
+          <Tag variant='accent'>
+            {groups.length} role{groups.length === 1 ? '' : 's'} · {totalMembers} member
+            {totalMembers === 1 ? '' : 's'}
+          </Tag>
+        </div>
       </div>
 
       {groups.length === 0 ? (
-        <Empty>No active roles indexed for this chain.</Empty>
+        <Empty>No active roles indexed for this view.</Empty>
       ) : (
         groups.map((g) => (
           <Card
@@ -194,6 +207,7 @@ export function Roles({ chain }: Props) {
                 {shortAddress(g.role, 8)}
               </span>
             }
+            dense
           >
             <Table columns={columns} rows={g.members} getRowKey={(r) => r.key} />
           </Card>

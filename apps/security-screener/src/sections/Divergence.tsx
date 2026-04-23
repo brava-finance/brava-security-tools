@@ -1,13 +1,14 @@
 import { useMemo } from 'react';
 
 import { Card } from '../components/Card';
-import { ErrorPane, Loading } from '../components/DataState';
+import { ChainBadge } from '../components/ChainBadge';
+import { ErrorPane, Loading, PartialWarning } from '../components/DataState';
 import { AddressLink, TxLink } from '../components/ExplorerLink';
 import { Table } from '../components/Table';
 import type { Column } from '../components/Table';
 import { Tag } from '../components/Tag';
-import { useDashboardData, useDivergenceData } from '../hooks/useSubgraphData';
-import { CHAINS, type ChainId } from '../lib/config';
+import { useMultiDashboardData, useMultiDivergenceData } from '../hooks/useSubgraphData';
+import { CHAINS, type ChainId, type ViewId } from '../lib/config';
 import {
   computeRoleDivergence,
   deriveRolesFromAccessControl,
@@ -17,26 +18,82 @@ import type { RoleDivergence, RoleDivergenceReport } from '../lib/derive';
 import { formatRelative, formatTimestamp } from '../lib/format';
 
 interface Props {
-  chain: ChainId;
+  view: ViewId;
 }
 
-const EMPTY_REPORT: RoleDivergenceReport = { drift: [], acOnly: [], loggerOnly: [] };
+type ChainReport = { chain: ChainId; report: RoleDivergenceReport };
 
-export function Divergence({ chain }: Props) {
-  const chainCfg = CHAINS[chain];
-  const dashboard = useDashboardData(chain);
-  const divergence = useDivergenceData(chain);
+export function Divergence({ view }: Props) {
+  const dashboard = useMultiDashboardData(view);
+  const divergence = useMultiDivergenceData(view);
+  const isMulti = view === 'all';
 
-  const report = useMemo<RoleDivergenceReport>(() => {
-    if (dashboard.data === undefined || divergence.data === undefined) return EMPTY_REPORT;
-    return computeRoleDivergence(
-      deriveRolesFromLogger(dashboard.data),
-      deriveRolesFromAccessControl(divergence.data)
-    );
-  }, [dashboard.data, divergence.data]);
+  const reports = useMemo<ChainReport[]>(() => {
+    const out: ChainReport[] = [];
+    for (const { chain, data } of divergence.chains) {
+      const dashData = dashboard.chains.find((c) => c.chain === chain)?.data;
+      if (dashData === undefined) continue;
+      out.push({
+        chain,
+        report: computeRoleDivergence(
+          deriveRolesFromLogger(dashData),
+          deriveRolesFromAccessControl(data)
+        ),
+      });
+    }
+    return out;
+  }, [dashboard.chains, divergence.chains]);
 
-  const isLoading = dashboard.isLoading || divergence.isLoading;
+  const isLoading =
+    dashboard.chains.length === 0 &&
+    divergence.chains.length === 0 &&
+    (dashboard.isLoading || divergence.isLoading);
   const error = dashboard.error ?? divergence.error;
+
+  if (isLoading) return <Loading label='Comparing Logger vs AccessControl…' />;
+  if (reports.length === 0 && error !== null) return <ErrorPane error={error} />;
+
+  const totals = {
+    drift: reports.reduce((s, r) => s + r.report.drift.length, 0),
+    acOnly: reports.reduce((s, r) => s + r.report.acOnly.length, 0),
+    loggerOnly: reports.reduce((s, r) => s + r.report.loggerOnly.length, 0),
+  };
+
+  return (
+    <div className='grid gap-4'>
+      <div className='flex flex-wrap items-center justify-between gap-3'>
+        <div className='flex flex-wrap items-center gap-2'>
+          {totals.drift === 0 ? (
+            <Tag variant='ok'>no drift</Tag>
+          ) : (
+            <Tag variant='bad'>{totals.drift} drift rows</Tag>
+          )}
+          <Tag variant='neutral'>{totals.acOnly} AC-only</Tag>
+          <Tag variant='neutral'>{totals.loggerOnly} logger-only</Tag>
+        </div>
+        {(dashboard.isPartial || divergence.isPartial) && <PartialWarning />}
+      </div>
+
+      {reports.map(({ chain, report }) => (
+        <ChainReportBlock key={chain} chain={chain} report={report} showHeader={isMulti} />
+      ))}
+    </div>
+  );
+}
+
+function ChainReportBlock({
+  chain,
+  report,
+  showHeader,
+}: {
+  chain: ChainId;
+  report: RoleDivergenceReport;
+  showHeader: boolean;
+}) {
+  const chainCfg = CHAINS[chain];
+  const hasDrift = report.drift.length > 0;
+  const hasAcOnly = report.acOnly.length > 0;
+  const hasLoggerOnly = report.loggerOnly.length > 0;
 
   // Two-sided comparison columns — only useful for genuine drift.
   const driftColumns: Array<Column<RoleDivergence>> = [
@@ -86,8 +143,6 @@ export function Divergence({ chain }: Props) {
     },
   ];
 
-  // One-sided (acOnly) — show the AC grant details without the "missing vs
-  // active" comparison that would look alarming.
   const acOnlyColumns: Array<Column<RoleDivergence>> = [
     {
       key: 'role',
@@ -133,8 +188,6 @@ export function Divergence({ chain }: Props) {
     },
   ];
 
-  // One-sided (loggerOnly) — inverse of above. Phantom Logger events with no
-  // AC counterpart.
   const loggerOnlyColumns: Array<Column<RoleDivergence>> = [
     {
       key: 'role',
@@ -173,53 +226,60 @@ export function Divergence({ chain }: Props) {
     },
   ];
 
-  const hasDrift = report.drift.length > 0;
-  const hasAcOnly = report.acOnly.length > 0;
-  const hasLoggerOnly = report.loggerOnly.length > 0;
-
-  let driftBody: React.ReactNode;
-  if (isLoading) {
-    driftBody = <Loading label='Comparing Logger vs AccessControl…' />;
-  } else if (error !== null) {
-    driftBody = <ErrorPane error={error} />;
-  } else if (!hasDrift) {
-    driftBody = (
-      <div className='flex items-center gap-2'>
-        <Tag variant='ok'>clean</Tag>
-        <span className='text-xs text-[var(--color-text-muted)]'>
-          No role has conflicting Logger and AccessControl history.
-        </span>
-      </div>
-    );
-  } else {
-    driftBody = <Table columns={driftColumns} rows={report.drift} getRowKey={(r) => r.key} />;
-  }
-
-  const showAcOnlyCard = !isLoading && error === null && hasAcOnly;
-  const showLoggerOnlyCard = !isLoading && error === null && hasLoggerOnly;
+  const driftBody = hasDrift ? (
+    <Table columns={driftColumns} rows={report.drift} getRowKey={(r) => r.key} />
+  ) : (
+    <div className='px-4 py-3 flex items-center gap-2'>
+      <Tag variant='ok'>clean</Tag>
+      <span className='text-xs text-[var(--color-text-muted)]'>
+        No role has conflicting Logger and AccessControl history.
+      </span>
+    </div>
+  );
 
   return (
-    <div className='grid gap-4'>
+    <div className='grid gap-3'>
       <Card
-        title='Role drift (Logger vs AccessControl)'
+        accent={chainCfg.color}
+        title={
+          <div className='flex items-center gap-2'>
+            <span>Role drift (Logger vs AccessControl)</span>
+            {showHeader && <ChainBadge chain={chain} variant='short' />}
+          </div>
+        }
         subtitle='Real disagreements between the Logger-derived view and AdminVault ground truth. Any row here means the two sources have seen conflicting activity for the same (role, account) — investigate immediately.'
+        dense
       >
         {driftBody}
       </Card>
 
-      {showAcOnlyCard && (
+      {hasAcOnly && (
         <Card
-          title={`Granted via AccessControl only (${report.acOnly.length})`}
+          accent={chainCfg.color}
+          title={
+            <div className='flex items-center gap-2'>
+              <span>Granted via AccessControl only ({report.acOnly.length})</span>
+              {showHeader && <ChainBadge chain={chain} variant='short' />}
+            </div>
+          }
           subtitle='Role holders whose grant never flowed through the Logger. Expected for the AdminVault constructor (initial deploy emits a batch of RoleGranted events) and for any direct admin grants that skip the delay-protected flow. Listed here for auditability.'
+          dense
         >
           <Table columns={acOnlyColumns} rows={report.acOnly} getRowKey={(r) => r.key} />
         </Card>
       )}
 
-      {showLoggerOnlyCard && (
+      {hasLoggerOnly && (
         <Card
-          title={`Logger events without AccessControl counterpart (${report.loggerOnly.length})`}
-          subtitle='Logger recorded role activity but AdminVault AccessControl never emitted the matching event. Unexpected — likely indicates a phantom Logger event and is worth investigating.'
+          accent={chainCfg.color}
+          title={
+            <div className='flex items-center gap-2'>
+              <span>Logger events without AccessControl counterpart ({report.loggerOnly.length})</span>
+              {showHeader && <ChainBadge chain={chain} variant='short' />}
+            </div>
+          }
+          subtitle="Logger recorded role activity but AdminVault AccessControl never emitted the matching event. Unexpected — likely indicates a phantom Logger event and is worth investigating."
+          dense
         >
           <Table columns={loggerOnlyColumns} rows={report.loggerOnly} getRowKey={(r) => r.key} />
         </Card>

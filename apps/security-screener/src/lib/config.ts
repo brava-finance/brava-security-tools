@@ -1,8 +1,16 @@
 export type ChainId = 'arbitrum' | 'base' | 'mainnet';
 
+// The screener supports an aggregated "all chains" view in addition to the
+// three per-chain views. Data sections treat `'all'` as "fetch every chain in
+// parallel and tag each row with its origin chain".
+export type ViewId = ChainId | 'all';
+
 export interface ChainConfig {
   id: ChainId;
   label: string;
+  shortLabel: string;
+  // Accent colour used for the chain dot / badge / per-chain stat stripe.
+  color: string;
   chainId: number;
   explorer: string;
   contracts: {
@@ -28,14 +36,26 @@ const fallback = (envKey: string, hardcoded: string): string => {
   return value;
 };
 
-// The production-studio endpoints below are placeholders. Wire the real
-// subgraph IDs via a `.env.production` or via a runtime `window.__BRAVA_SCREENER__`
-// override (see `App.tsx`). The contract addresses are duplicated from
-// `apps/security-subgraph/networks.json` and must stay in sync.
+// The production Graph Studio endpoints below are the canonical, public read
+// endpoints for the three Brava security subgraphs (studio slug owner 89709).
+// They are hardcoded on purpose: the screener is designed to be reproducible
+// from the commit alone, so baking environment-dependent URLs would break
+// that property.
+//
+// For local development against a different endpoint (e.g. the docker-compose
+// graph-node stack, or a privately-deployed subgraph), set the matching
+// `VITE_SUBGRAPH_*` env var in `.env.local` — it overrides the hardcoded URL
+// at build time. For IPFS pins that need to be repointable without a rebuild,
+// use the runtime `window.__BRAVA_SCREENER__.subgraphs` override instead.
+//
+// The contract addresses are duplicated from `apps/security-subgraph/networks.json`
+// and must stay in sync.
 export const CHAINS: Record<ChainId, ChainConfig> = {
   arbitrum: {
     id: 'arbitrum',
     label: 'Arbitrum One',
+    shortLabel: 'Arbitrum',
+    color: '#28a0f0',
     chainId: 42161,
     explorer: 'https://arbiscan.io',
     contracts: {
@@ -47,12 +67,14 @@ export const CHAINS: Record<ChainId, ChainConfig> = {
     },
     subgraphUrl: fallback(
       'VITE_SUBGRAPH_ARBITRUM',
-      'https://api.studio.thegraph.com/query/brava/brava-security-arbitrum/version/latest'
+      'https://api.studio.thegraph.com/query/89709/brava-security-arbitrum/version/latest'
     ),
   },
   base: {
     id: 'base',
     label: 'Base',
+    shortLabel: 'Base',
+    color: '#1652f0',
     chainId: 8453,
     explorer: 'https://basescan.org',
     contracts: {
@@ -64,12 +86,14 @@ export const CHAINS: Record<ChainId, ChainConfig> = {
     },
     subgraphUrl: fallback(
       'VITE_SUBGRAPH_BASE',
-      'https://api.studio.thegraph.com/query/brava/brava-security-base/version/latest'
+      'https://api.studio.thegraph.com/query/89709/brava-security-base/version/latest'
     ),
   },
   mainnet: {
     id: 'mainnet',
     label: 'Ethereum Mainnet',
+    shortLabel: 'Ethereum',
+    color: '#8a92b2',
     chainId: 1,
     explorer: 'https://etherscan.io',
     contracts: {
@@ -82,12 +106,55 @@ export const CHAINS: Record<ChainId, ChainConfig> = {
     },
     subgraphUrl: fallback(
       'VITE_SUBGRAPH_MAINNET',
-      'https://api.studio.thegraph.com/query/brava/brava-security-ethereum/version/latest'
+      'https://api.studio.thegraph.com/query/89709/brava-security-ethereum/version/latest'
     ),
   },
 };
 
 export const CHAIN_ORDER: ChainId[] = ['arbitrum', 'base', 'mainnet'];
+
+// Ordered list of views for the top-level network tabs. `'all'` is first so
+// that fresh visitors land on the aggregated view by default.
+export const VIEW_ORDER: ViewId[] = ['all', 'arbitrum', 'base', 'mainnet'];
+
+export interface ViewMeta {
+  id: ViewId;
+  label: string;
+  shortLabel: string;
+  // Chains included in this view. For `'all'` this is every indexed chain.
+  chains: ChainId[];
+}
+
+export const VIEW_META: Record<ViewId, ViewMeta> = {
+  all: {
+    id: 'all',
+    label: 'All chains',
+    shortLabel: 'All',
+    chains: [...CHAIN_ORDER],
+  },
+  arbitrum: {
+    id: 'arbitrum',
+    label: CHAINS.arbitrum.label,
+    shortLabel: CHAINS.arbitrum.shortLabel,
+    chains: ['arbitrum'],
+  },
+  base: {
+    id: 'base',
+    label: CHAINS.base.label,
+    shortLabel: CHAINS.base.shortLabel,
+    chains: ['base'],
+  },
+  mainnet: {
+    id: 'mainnet',
+    label: CHAINS.mainnet.label,
+    shortLabel: CHAINS.mainnet.shortLabel,
+    chains: ['mainnet'],
+  },
+};
+
+export function chainsForView(view: ViewId): ChainId[] {
+  return VIEW_META[view].chains;
+}
 
 export interface RuntimeOverride {
   subgraphs?: Partial<Record<ChainId, string>>;

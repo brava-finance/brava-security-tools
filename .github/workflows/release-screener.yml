@@ -1,0 +1,237 @@
+name: Release security screener
+
+# Produces a reproducible release for apps/security-screener:
+#   * pass 1 build with no VITE_BUNDLE_HASH      -> un-embedded aggregate SHA-256
+#     (this is the hash displayed in the running UI)
+#   * pass 2 build with that hash baked in       -> pinned dist/ SHA-256 + IPFS CID
+#
+# Both passes use a deterministic VITE_BUILD_TIME derived from the release
+# commit itself, so reviewers can reproduce the artifacts with nothing but
+# `git checkout <commit>` and the same toolchain (Node 22, pnpm 9, ipfs-car 3.1.0).
+#
+# The workflow creates the GitHub release and uploads the hashes files plus the
+# CAR, but does NOT push the bytes to any IPFS pinning service — do that as a
+# follow-up with `w3 up --car` / Pinata / your own kubo. All of them will
+# publish the CAR at the same CID that is printed in the release body.
+
+on:
+  push:
+    tags:
+      - 'screener-v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Compute attestations but do not create a GitHub release'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, attest and release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Guard against runtime env leakage
+        # The reproducibility property depends on the bundle being a pure
+        # function of the release commit. `VITE_*` vars get baked into the
+        # build output, so if the runner somehow exports them we must fail
+        # loudly rather than silently ship a non-reproducible artifact.
+        # The only exceptions are the three attestation vars we set ourselves
+        # in the next steps.
+        run: |
+          set -euo pipefail
+          BAD=$(env | awk -F= '/^VITE_/ {print $1}' \
+            | grep -Ev '^(VITE_BUILD_COMMIT|VITE_BUILD_TIME|VITE_BUNDLE_HASH)$' || true)
+          if [[ -n "${BAD}" ]]; then
+            echo "Refusing to build: unexpected VITE_* env vars set on the runner:"
+            echo "${BAD}"
+            exit 1
+          fi
+
+      - name: Capture release inputs
+        id: inputs
+        run: |
+          set -euo pipefail
+          COMMIT=$(git rev-parse HEAD)
+          BUILD_TIME=$(git show -s --format=%cI HEAD)
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="screener-dev-$(date -u +%Y%m%dT%H%M%SZ)"
+          fi
+          echo "commit=${COMMIT}"          >> "$GITHUB_OUTPUT"
+          echo "build_time=${BUILD_TIME}"  >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}"                >> "$GITHUB_OUTPUT"
+          echo "commit=${COMMIT}"
+          echo "build_time=${BUILD_TIME}"
+          echo "tag=${TAG}"
+
+      - name: Pass 1 — un-embedded build (drives the UI's Bundle SHA-256)
+        id: pass1
+        env:
+          VITE_BUILD_COMMIT: ${{ steps.inputs.outputs.commit }}
+          VITE_BUILD_TIME: ${{ steps.inputs.outputs.build_time }}
+        run: |
+          set -euo pipefail
+          rm -rf apps/security-screener/dist
+          pnpm --filter @brava/security-screener build
+          pnpm --filter @brava/security-screener hash > /dev/null
+          AGG=$(awk '/^# aggregate:/ {print $3}' apps/security-screener/dist/dist-hashes.txt)
+          cp apps/security-screener/dist/dist-hashes.txt /tmp/unembedded.hashes.txt
+          echo "hash=${AGG}" >> "$GITHUB_OUTPUT"
+          echo "un-embedded aggregate: ${AGG}"
+
+      - name: Pass 2 — pinned build (the bytes we publish)
+        id: pass2
+        env:
+          VITE_BUILD_COMMIT: ${{ steps.inputs.outputs.commit }}
+          VITE_BUILD_TIME: ${{ steps.inputs.outputs.build_time }}
+          VITE_BUNDLE_HASH: ${{ steps.pass1.outputs.hash }}
+        run: |
+          set -euo pipefail
+          rm -rf apps/security-screener/dist
+          pnpm --filter @brava/security-screener build
+          pnpm --filter @brava/security-screener hash > /dev/null
+          AGG=$(awk '/^# aggregate:/ {print $3}' apps/security-screener/dist/dist-hashes.txt)
+          cp apps/security-screener/dist/dist-hashes.txt /tmp/pinned.hashes.txt
+          echo "hash=${AGG}" >> "$GITHUB_OUTPUT"
+          echo "pinned aggregate: ${AGG}"
+
+      - name: Pack CAR and compute IPFS CID
+        id: car
+        run: |
+          set -euo pipefail
+          # pnpm --filter exec runs inside the package dir, so paths to dist
+          # are relative to apps/security-screener, not the repo root.
+          pnpm --filter @brava/security-screener exec \
+            ipfs-car pack dist --output /tmp/screener.car
+          CID=$(pnpm --filter @brava/security-screener exec \
+            ipfs-car roots /tmp/screener.car | tr -d '[:space:]')
+          IPFS_CAR_VERSION=$(pnpm --filter @brava/security-screener exec ipfs-car --version \
+            | awk -F', ' '{print $2}' | tr -d '[:space:]')
+          echo "cid=${CID}"                             >> "$GITHUB_OUTPUT"
+          echo "ipfs_car_version=${IPFS_CAR_VERSION}"   >> "$GITHUB_OUTPUT"
+          echo "CID: ${CID}"
+          echo "ipfs-car: ${IPFS_CAR_VERSION}"
+
+      - name: Assemble release notes
+        id: notes
+        env:
+          COMMIT: ${{ steps.inputs.outputs.commit }}
+          BUILD_TIME: ${{ steps.inputs.outputs.build_time }}
+          UNEMBEDDED_HASH: ${{ steps.pass1.outputs.hash }}
+          PINNED_HASH: ${{ steps.pass2.outputs.hash }}
+          PINNED_CID: ${{ steps.car.outputs.cid }}
+          IPFS_CAR_VERSION: ${{ steps.car.outputs.ipfs_car_version }}
+        run: |
+          set -euo pipefail
+          # Use a quoted heredoc + envsubst so that shell command-substitutions
+          # in the verification snippets are preserved literally.
+          cat > /tmp/release-body.tpl <<'TPL'
+          Security screener release for commit `${COMMIT}`.
+
+          | Field                                    | Value                |
+          | ---------------------------------------- | -------------------- |
+          | Commit                                   | `${COMMIT}`          |
+          | `VITE_BUILD_TIME`                        | `${BUILD_TIME}`      |
+          | `VITE_BUNDLE_HASH` (shown in the UI)     | `${UNEMBEDDED_HASH}` |
+          | Pinned `dist/` SHA-256                   | `${PINNED_HASH}`     |
+          | IPFS CID                                 | `${PINNED_CID}`      |
+          | CAR packed with                          | `ipfs-car@${IPFS_CAR_VERSION}` |
+
+          Attached assets:
+
+          - `unembedded.hashes.txt` — per-file SHA-256 for pass 1 (matches the UI).
+          - `pinned.hashes.txt` — per-file SHA-256 for pass 2 (the pinned `dist/`).
+          - `screener.car` — the exact bytes published at the CID above. Pin this
+            to any IPFS provider; all of them should publish it at the same CID.
+
+          ## Verify
+
+          Reproduce the un-embedded build and match it against the UI's
+          `Bundle SHA-256`:
+
+          ```bash
+          git clone https://github.com/brava-finance/brava-security-tools
+          cd brava-security-tools && git checkout ${COMMIT}
+          pnpm install --frozen-lockfile
+          VITE_BUILD_COMMIT=$(git rev-parse HEAD) \
+          VITE_BUILD_TIME=$(git show -s --format=%cI HEAD) \
+            pnpm --filter @brava/security-screener build
+          pnpm --filter @brava/security-screener hash
+          # aggregate must equal ${UNEMBEDDED_HASH}
+          ```
+
+          Optionally, reproduce the pinned artifact and match the CID:
+
+          ```bash
+          VITE_BUILD_COMMIT=$(git rev-parse HEAD) \
+          VITE_BUILD_TIME=$(git show -s --format=%cI HEAD) \
+          VITE_BUNDLE_HASH=${UNEMBEDDED_HASH} \
+            pnpm --filter @brava/security-screener build
+          pnpm --filter @brava/security-screener hash
+          # aggregate must equal ${PINNED_HASH}
+          pnpm --filter @brava/security-screener exec \
+            ipfs-car pack dist --output /tmp/screener.car
+          pnpm --filter @brava/security-screener exec \
+            ipfs-car roots /tmp/screener.car
+          # must equal ${PINNED_CID}
+          ```
+          TPL
+          envsubst < /tmp/release-body.tpl > /tmp/release-body.md
+          echo "---- release body ----"
+          cat /tmp/release-body.md
+
+      - name: Upload artifacts (always, even on dry runs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: screener-release-${{ steps.inputs.outputs.tag }}
+          path: |
+            /tmp/unembedded.hashes.txt
+            /tmp/pinned.hashes.txt
+            /tmp/screener.car
+            /tmp/release-body.md
+          if-no-files-found: error
+
+      - name: Create GitHub release (draft)
+        # Created as a DRAFT on purpose: the release body advertises a CID, but
+        # the bytes at that CID are not reachable until someone pins the
+        # attached screener.car to an IPFS provider. Publishing the draft is
+        # the maintainer's final step, done only after confirming the pin is
+        # live (see README → "Cutting a release").
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/screener-v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.inputs.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            --draft \
+            --title "Security screener $TAG" \
+            --notes-file /tmp/release-body.md \
+            "/tmp/unembedded.hashes.txt#unembedded.hashes.txt" \
+            "/tmp/pinned.hashes.txt#pinned.hashes.txt" \
+            "/tmp/screener.car#screener.car"

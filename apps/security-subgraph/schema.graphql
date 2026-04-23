@@ -434,3 +434,65 @@ type ProxyAdminOwnershipTransferred @entity(immutable: true) {
   blockTimestamp: BigInt!
   txHash: Bytes!
 }
+
+# Safe-deployment proxy (TransparentUpgradeableProxy) upgrade + admin rotation
+# events. Shape matches LoggerUpgraded / LoggerProxyAdminChanged so the frontend
+# can render both proxies with the same UI.
+type SafeDeploymentUpgraded @entity(immutable: true) {
+  id: Bytes!
+  proxy: Bytes!
+  implementation: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+type SafeDeploymentProxyAdminChanged @entity(immutable: true) {
+  id: Bytes!
+  proxy: Bytes!
+  previousAdmin: Bytes!
+  newAdmin: Bytes!
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}
+
+# End-owner safe discovered by following ProxyAdmin.OwnershipTransferred events.
+# Captured once per distinct owner address when the screener first observes it.
+# `isLikelySafe` reflects whether `getOwners()` + `getThreshold()` returned
+# successfully at snapshot time — `false` means the address is NOT a Gnosis
+# Safe (or is an unsupported version), which is a red flag for the screener.
+# `owners`/`threshold`/`safeVersion` represent the state as of `firstIndexedAt`;
+# apply subsequent `SafeEvent` rows to derive the current state.
+type SafeSnapshot @entity(immutable: false) {
+  id: Bytes! # safe address, lowercased
+  safe: Bytes!
+  owners: [Bytes!]!
+  threshold: BigInt!
+  isLikelySafe: Boolean!
+  safeVersion: String
+  firstIndexedAt: BigInt!
+  firstIndexedBlock: BigInt!
+  firstIndexedTx: Bytes!
+  # Which proxy admin(s) point to this safe. Populated by the spawning handler
+  # so the UI can show "this safe is the end-owner of LoggerProxyAdmin on
+  # arbitrum, base, mainnet and SafeDeploymentProxyAdmin on mainnet" without
+  # a secondary query.
+  roles: [String!]!
+}
+
+# Governance-relevant Safe events — owner/threshold rotations, guard and
+# fallback-handler swaps. Execution and approval events are deliberately not
+# indexed so the timeline stays high-signal.
+type SafeEvent @entity(immutable: true) {
+  id: Bytes!
+  safe: Bytes!
+  kind: String! # 'AddedOwner' | 'RemovedOwner' | 'ChangedThreshold' | 'ChangedGuard' | 'ChangedFallbackHandler'
+  owner: Bytes
+  threshold: BigInt
+  guard: Bytes
+  fallbackHandler: Bytes
+  blockNumber: BigInt!
+  blockTimestamp: BigInt!
+  txHash: Bytes!
+}

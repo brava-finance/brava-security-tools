@@ -65,6 +65,51 @@ export interface LoggerProxyAdminChangedEntity extends BaseEvent {
   newAdmin: string;
 }
 
+export interface SafeDeploymentUpgradedEntity extends BaseEvent {
+  proxy: string;
+  implementation: string;
+}
+
+export interface SafeDeploymentProxyAdminChangedEntity extends BaseEvent {
+  proxy: string;
+  previousAdmin: string;
+  newAdmin: string;
+}
+
+// Snapshot of a Gnosis Safe as observed from the end-owner of a ProxyAdmin.
+// `isLikelySafe: false` means the address did NOT respond to getOwners() +
+// getThreshold() at snapshot time and is either an EOA, a non-Safe contract,
+// or an older Safe version the screener doesn't recognise — any of which is
+// a red flag that warrants manual review.
+export interface SafeSnapshotEntity {
+  id: string;
+  safe: string;
+  owners: string[];
+  threshold: string;
+  isLikelySafe: boolean;
+  safeVersion: string | null;
+  firstIndexedAt: string;
+  firstIndexedBlock: string;
+  firstIndexedTx: string;
+  roles: string[];
+}
+
+export type SafeEventKind =
+  | 'AddedOwner'
+  | 'RemovedOwner'
+  | 'ChangedThreshold'
+  | 'ChangedGuard'
+  | 'ChangedFallbackHandler';
+
+export interface SafeEventEntity extends BaseEvent {
+  safe: string;
+  kind: SafeEventKind;
+  owner: string | null;
+  threshold: string | null;
+  guard: string | null;
+  fallbackHandler: string | null;
+}
+
 export interface ProxyAdminOwnershipTransferredEntity extends BaseEvent {
   proxyAdmin: string;
   role: string;

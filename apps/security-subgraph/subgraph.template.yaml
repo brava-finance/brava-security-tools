@@ -95,7 +95,10 @@ dataSources:
       file: ./src/loggerProxy.ts
 
   # ProxyAdmin owner rotations must also be visible — whoever owns this
-  # controls the logger implementation.
+  # controls the logger implementation. This data source seeds the bootstrap
+  # admin; the ProxyAdmin template below takes over for any admin rotated in
+  # via `AdminChanged` so the subgraph auto-follows admin addresses without
+  # needing manifest edits.
   - kind: ethereum
     name: LoggerProxyAdmin
     network: {{ graphNetwork }}
@@ -109,17 +112,54 @@ dataSources:
       language: wasm/assemblyscript
       entities:
         - ProxyAdminOwnershipTransferred
+        - SafeSnapshot
       abis:
         - name: IProxyAdmin
           file: ./abis/IProxyAdmin.json
+        # Used by the `try_` snapshot path that fires when a new end owner is
+        # discovered — lets the subgraph record whether the owner is a valid
+        # Gnosis Safe and capture initial owners/threshold/version.
+        - name: ISafe
+          file: ./abis/ISafe.json
       eventHandlers:
         - event: OwnershipTransferred(indexed address,indexed address)
-          handler: handleProxyAdminOwnershipTransferred
+          handler: handleLoggerProxyAdminOwnershipTransferred
       file: ./src/proxyAdmin.ts
+
+  # The safe-deployment proxy is a TransparentUpgradeableProxy on every chain.
+  # Indexing it mirrors what we do for LoggerProxy: `Upgraded` tells us which
+  # implementation is live, and `AdminChanged` both records the rotation and
+  # fires the ProxyAdmin template so we automatically start indexing whoever
+  # the new admin is.
+  - kind: ethereum
+    name: SafeDeploymentProxy
+    network: {{ graphNetwork }}
+    source:
+      address: '{{ SafeDeploymentProxy.address }}'
+      abi: ITransparentUpgradeableProxy
+      startBlock: {{ SafeDeploymentProxy.startBlock }}
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - SafeDeploymentUpgraded
+        - SafeDeploymentProxyAdminChanged
+      abis:
+        - name: ITransparentUpgradeableProxy
+          file: ./abis/ITransparentUpgradeableProxy.json
+      eventHandlers:
+        - event: Upgraded(indexed address)
+          handler: handleSafeDeploymentUpgraded
+        - event: AdminChanged(address,address)
+          handler: handleSafeDeploymentAdminChanged
+      file: ./src/safeDeploymentProxy.ts
 {{#hasSafeDeploymentProxyAdmin}}
 
-  # On mainnet the safe-deployment proxy uses a separate ProxyAdmin. Index it
-  # too so the screener has one unified view of "who can upgrade what".
+  # Bootstrap for the safe-deployment ProxyAdmin that was live at startBlock.
+  # Once the safe-deployment proxy rotates to a new admin, the ProxyAdmin
+  # template takes over and indexes the new admin's OwnershipTransferred
+  # events going forward.
   - kind: ethereum
     name: SafeDeploymentProxyAdmin
     network: {{ graphNetwork }}
@@ -133,9 +173,12 @@ dataSources:
       language: wasm/assemblyscript
       entities:
         - ProxyAdminOwnershipTransferred
+        - SafeSnapshot
       abis:
         - name: IProxyAdmin
           file: ./abis/IProxyAdmin.json
+        - name: ISafe
+          file: ./abis/ISafe.json
       eventHandlers:
         - event: OwnershipTransferred(indexed address,indexed address)
           handler: handleSafeDeploymentProxyAdminOwnershipTransferred
@@ -317,3 +360,64 @@ dataSources:
           handler: handleActionEvent
       file: ./src/logger.ts
 {{/hasLoggerLegacyV2}}
+
+# Dynamically instantiated whenever a TransparentUpgradeableProxy rotates its
+# admin. The `role` ('LoggerProxyAdmin' | 'SafeDeploymentProxyAdmin') is passed
+# via DataSourceContext so the same handler can attribute events to either
+# proxy family without duplicating the manifest entry.
+templates:
+  - kind: ethereum/contract
+    name: ProxyAdmin
+    network: {{ graphNetwork }}
+    source:
+      abi: IProxyAdmin
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - ProxyAdminOwnershipTransferred
+        - SafeSnapshot
+      abis:
+        - name: IProxyAdmin
+          file: ./abis/IProxyAdmin.json
+        - name: ISafe
+          file: ./abis/ISafe.json
+      eventHandlers:
+        - event: OwnershipTransferred(indexed address,indexed address)
+          handler: handleProxyAdminOwnershipTransferredFromTemplate
+      file: ./src/proxyAdmin.ts
+
+  # Dynamically instantiated for any address that appears as the end-owner of
+  # a ProxyAdmin. The screener expects this to be a Gnosis Safe — so we index
+  # governance-relevant Safe events (owner rotations, threshold and guard
+  # changes) and capture initial state via `try_` calls at spawn time.
+  # Execution and approval events are deliberately not indexed so the timeline
+  # stays high-signal.
+  - kind: ethereum/contract
+    name: OwnerSafe
+    network: {{ graphNetwork }}
+    source:
+      abi: ISafe
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - SafeEvent
+        - SafeSnapshot
+      abis:
+        - name: ISafe
+          file: ./abis/ISafe.json
+      eventHandlers:
+        - event: AddedOwner(indexed address)
+          handler: handleSafeAddedOwner
+        - event: RemovedOwner(indexed address)
+          handler: handleSafeRemovedOwner
+        - event: ChangedThreshold(uint256)
+          handler: handleSafeChangedThreshold
+        - event: ChangedGuard(indexed address)
+          handler: handleSafeChangedGuard
+        - event: ChangedFallbackHandler(indexed address)
+          handler: handleSafeChangedFallbackHandler
+      file: ./src/ownerSafe.ts

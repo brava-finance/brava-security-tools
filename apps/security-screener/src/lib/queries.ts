@@ -12,7 +12,11 @@ import type {
   RoleAdminChangeEntity,
   RoleFromAccessControlEntity,
   RoleFromLoggerEntity,
+  SafeDeploymentProxyAdminChangedEntity,
+  SafeDeploymentUpgradedEntity,
+  SafeEventEntity,
   SafeSetupConfigUpdateEntity,
+  SafeSnapshotEntity,
   TokenAggregateEntity,
   TokenEntity,
 } from '../types/entities';
@@ -49,7 +53,16 @@ export interface DashboardResponse {
 
   loggerUpgradeds: LoggerUpgradedEntity[];
   loggerProxyAdminChangeds: LoggerProxyAdminChangedEntity[];
+  safeDeploymentUpgradeds: SafeDeploymentUpgradedEntity[];
+  safeDeploymentProxyAdminChangeds: SafeDeploymentProxyAdminChangedEntity[];
   proxyAdminOwnershipTransferreds: ProxyAdminOwnershipTransferredEntity[];
+
+  // End-owner Gnosis Safe tracking. Each distinct address that ever appeared
+  // as the newOwner of a ProxyAdmin gets a snapshot row (populated via on-chain
+  // try_ calls at first observation) and an event stream covering subsequent
+  // owner/threshold/guard/fallback-handler rotations.
+  safeSnapshots: SafeSnapshotEntity[];
+  safeEvents: SafeEventEntity[];
 
   safeSetupConfigUpdates: SafeSetupConfigUpdateEntity[];
 
@@ -143,8 +156,22 @@ export const DASHBOARD_QUERY = `query Dashboard($first: Int!) {
   loggerProxyAdminChangeds: loggerProxyAdminChangeds(first: $first, orderBy: blockNumber, orderDirection: desc) {
     ${BASE_FIELDS} proxy previousAdmin newAdmin
   }
+  safeDeploymentUpgradeds: safeDeploymentUpgradeds(first: $first, orderBy: blockNumber, orderDirection: desc) {
+    ${BASE_FIELDS} proxy implementation
+  }
+  safeDeploymentProxyAdminChangeds: safeDeploymentProxyAdminChangeds(first: $first, orderBy: blockNumber, orderDirection: desc) {
+    ${BASE_FIELDS} proxy previousAdmin newAdmin
+  }
   proxyAdminOwnershipTransferreds: proxyAdminOwnershipTransferreds(first: $first, orderBy: blockNumber, orderDirection: desc) {
     ${BASE_FIELDS} proxyAdmin role previousOwner newOwner
+  }
+
+  safeSnapshots: safeSnapshots(first: $first, orderBy: firstIndexedAt, orderDirection: desc) {
+    id safe owners threshold isLikelySafe safeVersion
+    firstIndexedAt firstIndexedBlock firstIndexedTx roles
+  }
+  safeEvents: safeEvents(first: $first, orderBy: blockNumber, orderDirection: desc) {
+    ${BASE_FIELDS} safe kind owner threshold guard fallbackHandler
   }
 
   safeSetupConfigUpdates: safeSetupConfigUpdates(first: $first, orderBy: blockNumber, orderDirection: desc) {

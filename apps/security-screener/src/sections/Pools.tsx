@@ -1,26 +1,22 @@
 import { useMemo } from 'react';
 
 import { Card } from '../components/Card';
-import { Empty, ErrorPane, Loading } from '../components/DataState';
+import { ChainBadge } from '../components/ChainBadge';
+import { Empty, ErrorPane, Loading, PartialWarning } from '../components/DataState';
 import { AddressLink, TxLink } from '../components/ExplorerLink';
-import { Tag } from '../components/Tag';
 import { Table } from '../components/Table';
 import type { Column } from '../components/Table';
-import { useDashboardData } from '../hooks/useSubgraphData';
-import { CHAINS, type ChainId } from '../lib/config';
-import { derivePools } from '../lib/derive';
-import type { DerivedEntry, PoolMeta } from '../lib/derive';
+import { Tag } from '../components/Tag';
+import { useMultiDashboardData } from '../hooks/useSubgraphData';
+import { CHAINS, type ViewId } from '../lib/config';
+import { derivePools, tagChain } from '../lib/derive';
+import type { ChainTagged, DerivedEntry, PoolMeta } from '../lib/derive';
 import { formatRelative, formatTimestamp } from '../lib/format';
 
 interface Props {
-  chain: ChainId;
+  view: ViewId;
 }
 
-// Matches the highlighting contract in Actions.tsx: a pool is "incomplete"
-// when the subgraph could not resolve either the protocol name (no action
-// whitelisted under the same protocolId — i.e. AdminVault points at an
-// unreachable pool) or the token metadata (ERC-20 calls reverted at grant
-// block — usually means no code at that address).
 function incompleteReasonForPool(meta: PoolMeta): string | undefined {
   const missing: string[] = [];
   if (meta.protocolName === undefined) missing.push('protocol');
@@ -33,32 +29,51 @@ function incompleteReasonForPool(meta: PoolMeta): string | undefined {
 const INCOMPLETE_ROW_CLASS =
   'bg-[color-mix(in_srgb,var(--color-warn)_8%,transparent)] hover:bg-[color-mix(in_srgb,var(--color-warn)_14%,transparent)]';
 
-export function Pools({ chain }: Props) {
-  const chainCfg = CHAINS[chain];
-  const query = useDashboardData(chain);
+export function Pools({ view }: Props) {
+  const query = useMultiDashboardData(view);
+  const isMulti = view === 'all';
 
-  const rows = useMemo<Array<DerivedEntry<PoolMeta>>>(() => {
-    if (query.data === undefined) return [];
-    return derivePools(query.data)
-      .filter((e) => e.status === 'active')
-      .sort((a, b) => {
-        const ap = a.meta.protocolName ?? '\uFFFF';
-        const bp = b.meta.protocolName ?? '\uFFFF';
-        if (ap !== bp) return ap.localeCompare(bp);
-        const as = a.meta.tokenSymbol ?? a.meta.tokenName ?? a.meta.poolAddress;
-        const bs = b.meta.tokenSymbol ?? b.meta.tokenName ?? b.meta.poolAddress;
-        return as.localeCompare(bs);
-      });
-  }, [query.data]);
+  const rows = useMemo<Array<ChainTagged<DerivedEntry<PoolMeta>>>>(() => {
+    const out: Array<ChainTagged<DerivedEntry<PoolMeta>>> = [];
+    for (const { chain, data } of query.chains) {
+      const active = derivePools(data).filter((e) => e.status === 'active');
+      for (const e of tagChain(chain, active)) out.push(e);
+    }
+    return out.sort((a, b) => {
+      const ap = a.meta.protocolName ?? '\uFFFF';
+      const bp = b.meta.protocolName ?? '\uFFFF';
+      if (ap !== bp) return ap.localeCompare(bp);
+      const as = a.meta.tokenSymbol ?? a.meta.tokenName ?? a.meta.poolAddress;
+      const bs = b.meta.tokenSymbol ?? b.meta.tokenName ?? b.meta.poolAddress;
+      if (as !== bs) return as.localeCompare(bs);
+      return a.chain.localeCompare(b.chain);
+    });
+  }, [query.chains]);
 
-  if (query.isLoading) return <Loading label='Fetching active pools…' />;
-  if (query.error !== null) return <ErrorPane error={query.error} />;
-  if (query.data === undefined) return <Empty>No data returned from subgraph.</Empty>;
+  if (query.chains.length === 0 && query.isLoading) {
+    return <Loading label='Fetching active pools…' />;
+  }
+  if (query.chains.length === 0 && query.error !== null) return <ErrorPane error={query.error} />;
+  if (query.chains.length === 0) return <Empty>No data returned from subgraph.</Empty>;
 
   const reviewCount = rows.filter((r) => incompleteReasonForPool(r.meta) !== undefined).length;
-  const reviewBadge = reviewCount > 0 ? <Tag variant='warn'>{reviewCount} need review</Tag> : null;
+  const actions = (
+    <div className='flex items-center gap-2'>
+      {query.isPartial && <PartialWarning />}
+      {reviewCount > 0 && <Tag variant='warn'>{reviewCount} need review</Tag>}
+    </div>
+  );
 
   const columns: Array<Column<(typeof rows)[number]>> = [
+    ...(isMulti
+      ? [
+          {
+            key: 'chain',
+            header: 'Chain',
+            render: (r: (typeof rows)[number]) => <ChainBadge chain={r.chain} variant='short' />,
+          } satisfies Column<(typeof rows)[number]>,
+        ]
+      : []),
     {
       key: 'proto',
       header: 'Protocol',
@@ -98,11 +113,11 @@ export function Pools({ chain }: Props) {
     {
       key: 'pool',
       header: 'Pool',
-      render: (r) => <AddressLink chain={chainCfg} address={r.meta.poolAddress} />,
+      render: (r) => <AddressLink chain={CHAINS[r.chain]} address={r.meta.poolAddress} />,
     },
     {
       key: 'at',
-      header: 'Granted at',
+      header: 'Granted',
       render: (r) =>
         r.grantedAt === undefined ? (
           <span className='text-[var(--color-text-faint)]'>—</span>
@@ -115,7 +130,7 @@ export function Pools({ chain }: Props) {
       header: 'Tx',
       render: (r) =>
         r.grantedTx !== undefined ? (
-          <TxLink chain={chainCfg} txHash={r.grantedTx} />
+          <TxLink chain={CHAINS[r.chain]} txHash={r.grantedTx} />
         ) : (
           <span className='text-[var(--color-text-faint)]'>—</span>
         ),
@@ -126,7 +141,8 @@ export function Pools({ chain }: Props) {
     <Card
       title={`Active pools (${rows.length})`}
       subtitle='Whitelisted deposit/withdraw targets. Protocol name is resolved from any action grant for the same protocolId; token name / symbol come from IERC20Metadata on the pool address at grant time. Rows highlighted in amber are missing on-chain metadata and should be reviewed.'
-      actions={reviewBadge}
+      actions={actions}
+      dense
     >
       <Table
         columns={columns}

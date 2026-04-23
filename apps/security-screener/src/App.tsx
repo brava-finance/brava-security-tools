@@ -2,10 +2,11 @@ import { useState } from 'react';
 
 import { NetworkTabs } from './components/NetworkTabs';
 import { SectionNav, type SectionId } from './components/SectionNav';
-import { CHAINS, type ChainId } from './lib/config';
+import { VIEW_META, type ViewId } from './lib/config';
 import { Actions } from './sections/Actions';
 import { Dashboard } from './sections/Dashboard';
 import { Divergence } from './sections/Divergence';
+import { Governance } from './sections/Governance';
 import { Pending } from './sections/Pending';
 import { Pools } from './sections/Pools';
 import { Roles } from './sections/Roles';
@@ -14,55 +15,77 @@ import { Tokens } from './sections/Tokens';
 import { Verify } from './sections/Verify';
 
 export function App() {
-  const [chain, setChain] = useState<ChainId>('arbitrum');
+  const [view, setView] = useState<ViewId>('all');
   const [section, setSection] = useState<SectionId>('dashboard');
 
   return (
     <div className='mx-auto flex min-h-screen max-w-[1280px] flex-col gap-6 px-6 py-8'>
-      <header className='flex flex-wrap items-center justify-between gap-4'>
-        <div className='min-w-0'>
-          <h1 className='text-2xl font-semibold tracking-tight'>Brava Security Screener</h1>
-          <p className='mt-1 max-w-2xl text-sm text-[var(--color-text-muted)]'>
-            Static, IPFS-hostable view of the on-chain state of the Brava admin vault, roles and
-            logger proxies, sourced exclusively from the open-source Brava security subgraph. Read
-            the{' '}
-            <a href='#verify' onClick={() => setSection('verify')}>
-              Verify yourself
-            </a>{' '}
-            section before trusting anything you see here.
-          </p>
-        </div>
-        <div className='flex flex-col items-end gap-2'>
-          <NetworkTabs active={chain} onChange={setChain} />
-          <span className='text-[10px] uppercase tracking-wide text-[var(--color-text-faint)]'>
-            chain id {CHAINS[chain].chainId}
-          </span>
+      <header className='flex flex-col gap-5'>
+        <div className='flex flex-wrap items-start justify-between gap-6'>
+          <div className='min-w-0 flex-1'>
+            <div className='flex flex-wrap items-center gap-3'>
+              <img
+                src='/logos/brava-full-dark-mode.svg'
+                alt='Brava'
+                width={203}
+                height={32}
+                className='h-8 w-auto select-none'
+                draggable={false}
+              />
+              <span
+                aria-hidden='true'
+                className='hidden h-6 w-px bg-[var(--color-border)] sm:inline-block'
+              />
+              <span className='text-xs font-medium uppercase tracking-[0.2em] text-[var(--color-text-muted)]'>
+                Security Screener
+              </span>
+            </div>
+            <p className='mt-3 max-w-2xl text-sm leading-relaxed text-[var(--color-text-muted)]'>
+              Static, IPFS-hostable view of the on-chain state of the Brava admin vault, roles and
+              logger proxies — sourced exclusively from the open-source Brava security subgraph.
+              Read the{' '}
+              <a href='#verify' onClick={() => setSection('verify')}>
+                Verify yourself
+              </a>{' '}
+              section before trusting anything you see here.
+            </p>
+          </div>
+          <div className='flex flex-col items-end gap-2'>
+            <NetworkTabs active={view} onChange={setView} />
+            <span className='text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]'>
+              viewing {VIEW_META[view].label}
+            </span>
+          </div>
         </div>
       </header>
 
       <SectionNav active={section} onChange={setSection} />
 
       <main className='flex flex-col gap-6 pb-10'>
-        {section === 'dashboard' && <Dashboard chain={chain} onNavigate={setSection} />}
-        {section === 'actions' && <Actions chain={chain} />}
-        {section === 'pools' && <Pools chain={chain} />}
-        {section === 'tokens' && <Tokens chain={chain} />}
-        {section === 'roles' && <Roles chain={chain} />}
-        {section === 'pending' && <Pending chain={chain} />}
-        {section === 'timeline' && <Timeline chain={chain} />}
-        {section === 'divergence' && <Divergence chain={chain} />}
+        {section === 'dashboard' && <Dashboard view={view} onNavigate={setSection} />}
+        {section === 'actions' && <Actions view={view} />}
+        {section === 'pools' && <Pools view={view} />}
+        {section === 'tokens' && <Tokens view={view} />}
+        {section === 'roles' && <Roles view={view} />}
+        {section === 'pending' && <Pending view={view} />}
+        {section === 'timeline' && <Timeline view={view} />}
+        {section === 'governance' && <Governance view={view} />}
+        {section === 'divergence' && <Divergence view={view} />}
         {section === 'verify' && <Verify />}
       </main>
 
-      <footer className='mt-auto border-t border-[var(--color-border-subtle)] pt-4 text-[11px] text-[var(--color-text-faint)]'>
-        No backend. No wallet. No analytics. Source:{' '}
-        <a
-          href='https://github.com/brava-fi/monorepo/tree/main/apps/security-screener'
-          target='_blank'
-          rel='noreferrer'
-        >
-          github.com/brava-fi/monorepo/apps/security-screener
-        </a>
+      <footer className='mt-auto flex flex-wrap items-center justify-between gap-2 border-t border-[var(--color-border-subtle)] pt-4 text-[11px] text-[var(--color-text-faint)]'>
+        <span>No backend. No wallet. No analytics.</span>
+        <span>
+          Source:{' '}
+          <a
+            href='https://github.com/brava-finance/brava-security-tools'
+            target='_blank'
+            rel='noreferrer'
+          >
+            github.com/brava-finance/brava-security-tools
+          </a>
+        </span>
       </footer>
     </div>
   );

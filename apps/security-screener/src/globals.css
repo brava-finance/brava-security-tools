@@ -4,30 +4,66 @@
   --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono: ui-monospace, 'JetBrains Mono', 'Fira Code', Menlo, monospace;
 
-  --color-bg: #08090c;
-  --color-bg-raised: #0e1015;
-  --color-bg-hover: #141820;
-  --color-border: #1f2530;
-  --color-border-subtle: #141820;
-  --color-text: #e6e8ee;
-  --color-text-muted: #8a93a6;
-  --color-text-faint: #5a6273;
+  --color-bg: #06070a;
+  --color-bg-raised: #0e1117;
+  --color-bg-elev: #131722;
+  --color-bg-hover: #181d29;
+  --color-border: #222838;
+  --color-border-subtle: #171c27;
+  --color-text: #eef0f6;
+  --color-text-muted: #9199ad;
+  --color-text-faint: #5c6578;
+
   --color-accent: #7cc4ff;
   --color-accent-strong: #4fa3ff;
+  --color-accent-soft: #1a2c44;
+
   --color-ok: #6ee7a0;
   --color-warn: #f5c25b;
   --color-bad: #ff7b7b;
+
+  /* Brand gradient — shows through the hero title and subtle page glow. */
+  --color-brand-1: #7cc4ff;
+  --color-brand-2: #b693ff;
+  --color-brand-3: #ffd28a;
 }
 
 html,
 body,
 #root {
-  height: 100%;
+  min-height: 100%;
   background: var(--color-bg);
   color: var(--color-text);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+/*
+ * Subtle radial + conic glow behind the entire viewport. Saturation is kept
+ * very low so the rest of the UI still reads as a neutral dark theme; the
+ * gradient only shows near the top of the page to give the hero a sense of
+ * depth without turning the screener into a marketing landing page.
+ */
+body {
+  background-image:
+    radial-gradient(
+      1200px 600px at 50% -10%,
+      color-mix(in srgb, var(--color-brand-1) 14%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      900px 500px at 85% 0%,
+      color-mix(in srgb, var(--color-brand-2) 10%, transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      800px 400px at 15% 5%,
+      color-mix(in srgb, var(--color-brand-3) 6%, transparent),
+      transparent 60%
+    );
+  background-attachment: fixed;
+  background-repeat: no-repeat;
 }
 
 * {
@@ -38,16 +74,19 @@ code,
 .mono {
   font-family: var(--font-mono);
   font-variant-ligatures: none;
+  letter-spacing: -0.01em;
 }
 
 a {
   color: var(--color-accent);
   text-decoration: none;
+  transition: color 120ms ease;
 }
 
 a:hover {
   color: var(--color-accent-strong);
   text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 ::selection {
@@ -56,15 +95,63 @@ a:hover {
 }
 
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
   background: var(--color-border);
-  border-radius: 4px;
+  border: 2px solid var(--color-bg);
+  border-radius: 8px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-text-faint);
+}
+
+/*
+ * Small reusable utility classes. Tailwind v4 reads these through the
+ * @import layer; component files still use arbitrary values for anything
+ * not worth naming.
+ */
+.brand-gradient-text {
+  background: linear-gradient(
+    90deg,
+    var(--color-brand-1) 0%,
+    var(--color-brand-2) 50%,
+    var(--color-brand-3) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.card-raised {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 40%),
+    var(--color-bg-raised);
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.02) inset,
+    0 12px 32px -18px rgba(0, 0, 0, 0.7);
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.6;
+  }
+  70% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
 }

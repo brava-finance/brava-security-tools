@@ -47,6 +47,7 @@ const view = {
   Logger: withOverride(cfg.Logger),
   LoggerProxy: withOverride(cfg.LoggerProxy),
   LoggerProxyAdmin: withOverride(cfg.LoggerProxyAdmin),
+  SafeDeploymentProxy: withOverride(cfg.SafeDeploymentProxy),
   SafeDeploymentProxyAdmin: withOverride(cfg.SafeDeploymentProxyAdmin),
   AdminVault: withOverride(cfg.AdminVault),
   SafeSetupRegistry: withOverride(cfg.SafeSetupRegistry),

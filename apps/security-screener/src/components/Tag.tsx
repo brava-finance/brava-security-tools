@@ -5,12 +5,13 @@ import { cn } from '../lib/format';
 type TagVariant = 'ok' | 'warn' | 'bad' | 'neutral' | 'accent';
 
 const VARIANT_CLASS: Record<TagVariant, string> = {
-  ok: 'bg-[color-mix(in_srgb,var(--color-ok)_14%,transparent)] text-[var(--color-ok)] border-[color-mix(in_srgb,var(--color-ok)_30%,transparent)]',
-  warn: 'bg-[color-mix(in_srgb,var(--color-warn)_14%,transparent)] text-[var(--color-warn)] border-[color-mix(in_srgb,var(--color-warn)_30%,transparent)]',
-  bad: 'bg-[color-mix(in_srgb,var(--color-bad)_14%,transparent)] text-[var(--color-bad)] border-[color-mix(in_srgb,var(--color-bad)_30%,transparent)]',
+  ok: 'bg-[color-mix(in_srgb,var(--color-ok)_16%,transparent)] text-[var(--color-ok)] border-[color-mix(in_srgb,var(--color-ok)_35%,transparent)]',
+  warn: 'bg-[color-mix(in_srgb,var(--color-warn)_16%,transparent)] text-[var(--color-warn)] border-[color-mix(in_srgb,var(--color-warn)_35%,transparent)]',
+  bad: 'bg-[color-mix(in_srgb,var(--color-bad)_16%,transparent)] text-[var(--color-bad)] border-[color-mix(in_srgb,var(--color-bad)_35%,transparent)]',
   accent:
-    'bg-[color-mix(in_srgb,var(--color-accent)_14%,transparent)] text-[var(--color-accent)] border-[color-mix(in_srgb,var(--color-accent)_30%,transparent)]',
-  neutral: 'bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] border-[var(--color-border)]',
+    'bg-[color-mix(in_srgb,var(--color-accent)_16%,transparent)] text-[var(--color-accent)] border-[color-mix(in_srgb,var(--color-accent)_35%,transparent)]',
+  neutral:
+    'bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] border-[var(--color-border-subtle)]',
 };
 
 interface TagProps {
@@ -23,7 +24,7 @@ export function Tag({ variant = 'neutral', children, className }: TagProps) {
   return (
     <span
       className={cn(
-        'inline-flex items-center rounded-md border px-1.5 py-0.5 text-[11px] font-medium tracking-wide uppercase',
+        'inline-flex items-center rounded-full border px-2 py-0.5 text-[10.5px] font-medium tracking-wide uppercase',
         VARIANT_CLASS[variant],
         className
       )}

@@ -13,6 +13,10 @@
       "address": "0x237E5d6CAf1ABc06B9A1a625FF04f8BC1b7F7e2c",
       "startBlock": 378500000
     },
+    "SafeDeploymentProxy": {
+      "address": "0xBcb65B28A566c20B48795624d8715EDC17FBCf34",
+      "startBlock": 378500000
+    },
     "AdminVault": {
       "address": "0x6340AD65c5CCdbAb2095aBBa89c4C42487978066",
       "startBlock": 378500000
@@ -36,6 +40,10 @@
       "address": "0x237E5d6CAf1ABc06B9A1a625FF04f8BC1b7F7e2c",
       "startBlock": 31200000
     },
+    "SafeDeploymentProxy": {
+      "address": "0xBcb65B28A566c20B48795624d8715EDC17FBCf34",
+      "startBlock": 31200000
+    },
     "AdminVault": {
       "address": "0x6340AD65c5CCdbAb2095aBBa89c4C42487978066",
       "startBlock": 31200000
@@ -57,6 +65,10 @@
     },
     "LoggerProxyAdmin": {
       "address": "0xc37dbbcaf7b494875ef2d1e70d74a9763d48c3cb",
+      "startBlock": 21700000
+    },
+    "SafeDeploymentProxy": {
+      "address": "0xBcb65B28A566c20B48795624d8715EDC17FBCf34",
       "startBlock": 21700000
     },
     "SafeDeploymentProxyAdmin": {

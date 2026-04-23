@@ -10,12 +10,32 @@ import type {
   ProxyAdminOwnershipTransferredEntity,
   RoleFromAccessControlEntity,
   RoleFromLoggerEntity,
+  SafeDeploymentProxyAdminChangedEntity,
+  SafeDeploymentUpgradedEntity,
+  SafeEventEntity,
   SafeSetupConfigUpdateEntity,
+  SafeSnapshotEntity,
   TokenAggregateEntity,
   TokenEntity,
 } from '../types/entities';
 
+import type { ChainId } from './config';
 import type { DashboardResponse, DivergenceResponse } from './queries';
+
+// Convenience union used by sections that render merged, multi-chain rows.
+export type ChainTagged<T> = T & { chain: ChainId };
+
+// Tag a list of derived entries with their originating chain and prefix their
+// keys so React reconciliation stays stable across the three chains (which
+// share AdminVault/Logger addresses and therefore produce colliding keys).
+export function tagChain<T extends { key: string }>(
+  chain: ChainId,
+  rows: T[]
+): Array<ChainTagged<T>> {
+  const out: Array<ChainTagged<T>> = [];
+  for (const r of rows) out.push({ ...r, chain, key: `${chain}:${r.key}` });
+  return out;
+}
 
 // Sort helper: subgraph already returns blockNumber DESC, but we mix collections
 // so we re-sort to get a strict chronological order per key.
@@ -25,6 +45,10 @@ function byBlockAsc<T extends { blockNumber: string; txHash: string }>(a: T, b: 
   if (ab < bb) return -1;
   if (ab > bb) return 1;
   return a.txHash.localeCompare(b.txHash);
+}
+
+function byBlockDesc<T extends { blockNumber: string; txHash: string }>(a: T, b: T): number {
+  return byBlockAsc(b, a);
 }
 
 type ProposalEventKind = 'propose' | 'grant' | 'cancel' | 'remove' | 'revoke';
@@ -448,12 +472,43 @@ export function latestLoggerProxyAdmin(
   return sorted.at(-1);
 }
 
+export function latestSafeDeploymentImplementation(
+  d: DashboardResponse
+): SafeDeploymentUpgradedEntity | undefined {
+  const sorted = [...d.safeDeploymentUpgradeds].sort(byBlockAsc);
+  return sorted.at(-1);
+}
+
+export function latestSafeDeploymentProxyAdmin(
+  d: DashboardResponse
+): SafeDeploymentProxyAdminChangedEntity | undefined {
+  const sorted = [...d.safeDeploymentProxyAdminChangeds].sort(byBlockAsc);
+  return sorted.at(-1);
+}
+
+// Resolve the current on-chain address of a proxy's admin. Prefers the latest
+// `AdminChanged` event observed on the proxy itself (captured via the dynamic
+// template) and falls back to the bootstrap address declared in the screener
+// config for chains where the admin has never been rotated.
+export function currentProxyAdminAddress(
+  d: DashboardResponse,
+  proxy: 'logger' | 'safeDeployment',
+  bootstrapAddress: string | undefined
+): string | undefined {
+  const latest =
+    proxy === 'logger' ? latestLoggerProxyAdmin(d) : latestSafeDeploymentProxyAdmin(d);
+  if (latest !== undefined) return latest.newAdmin;
+  return bootstrapAddress;
+}
+
 export function latestProxyAdminOwner(
   d: DashboardResponse,
-  proxyAdmin: string
+  proxyAdmin: string | undefined
 ): ProxyAdminOwnershipTransferredEntity | undefined {
+  if (proxyAdmin === undefined) return undefined;
+  const target = proxyAdmin.toLowerCase();
   const filtered = d.proxyAdminOwnershipTransferreds.filter(
-    (e) => e.proxyAdmin.toLowerCase() === proxyAdmin.toLowerCase()
+    (e) => e.proxyAdmin.toLowerCase() === target
   );
   const sorted = filtered.sort(byBlockAsc);
   return sorted.at(-1);
@@ -464,6 +519,179 @@ export function latestSafeSetupConfig(
 ): SafeSetupConfigUpdateEntity | undefined {
   const sorted = [...d.safeSetupConfigUpdates].sort(byBlockAsc);
   return sorted.at(-1);
+}
+
+// ---- End-owner Safe tracking ---------------------------------------------
+
+export type ProxyOwnerRole = 'LoggerProxyAdmin' | 'SafeDeploymentProxyAdmin';
+
+export interface EndOwnerInfo {
+  role: ProxyOwnerRole;
+  // The current ProxyAdmin contract that owns the proxy (may rotate over
+  // time). We keep it so the UI can link the two-hop relationship (proxy →
+  // admin → end owner) in the transfer tabs.
+  proxyAdmin: string | undefined;
+  // End owner = latest newOwner observed on `proxyAdmin`. `undefined` if no
+  // OwnershipTransferred event has been indexed for the current admin yet.
+  endOwner: string | undefined;
+}
+
+export function endOwnerInfo(
+  d: DashboardResponse,
+  role: ProxyOwnerRole,
+  bootstrapAdmin: string | undefined
+): EndOwnerInfo {
+  const proxyAdmin = currentProxyAdminAddress(
+    d,
+    role === 'LoggerProxyAdmin' ? 'logger' : 'safeDeployment',
+    bootstrapAdmin
+  );
+  const owner = latestProxyAdminOwner(d, proxyAdmin);
+  return { role, proxyAdmin, endOwner: owner?.newOwner };
+}
+
+export function safeSnapshotFor(
+  d: DashboardResponse,
+  address: string | undefined
+): SafeSnapshotEntity | undefined {
+  if (address === undefined) return undefined;
+  const target = address.toLowerCase();
+  return d.safeSnapshots.find((s) => s.safe.toLowerCase() === target);
+}
+
+// Replay the snapshot + subsequent SafeEvent stream to derive the currently
+// live owners and threshold. The subgraph already maintains `owners` on the
+// SafeSnapshot entity (it applies AddedOwner/RemovedOwner deltas in-place),
+// so this helper mostly exists to paper over cases where the snapshot is
+// stale relative to the events list fetched in the same request. We prefer
+// the snapshot when present and only replay when there's no snapshot at all.
+export interface SafeCurrentState {
+  owners: string[];
+  threshold: string;
+  isLikelySafe: boolean;
+  safeVersion: string | null;
+  lastUpdatedBlock: string | undefined;
+  lastUpdatedTimestamp: string | undefined;
+}
+
+export function safeCurrentState(
+  d: DashboardResponse,
+  address: string | undefined
+): SafeCurrentState | undefined {
+  const snapshot = safeSnapshotFor(d, address);
+  if (snapshot === undefined) return undefined;
+  const events = safeEventsFor(d, address).sort(byBlockAsc);
+  const last = events.at(-1);
+  return {
+    owners: snapshot.owners,
+    threshold: snapshot.threshold,
+    isLikelySafe: snapshot.isLikelySafe,
+    safeVersion: snapshot.safeVersion,
+    lastUpdatedBlock: last?.blockNumber ?? snapshot.firstIndexedBlock,
+    lastUpdatedTimestamp: last?.blockTimestamp ?? snapshot.firstIndexedAt,
+  };
+}
+
+export function safeEventsFor(
+  d: DashboardResponse,
+  address: string | undefined
+): SafeEventEntity[] {
+  if (address === undefined) return [];
+  const target = address.toLowerCase();
+  return d.safeEvents.filter((e) => e.safe.toLowerCase() === target);
+}
+
+// Summary of a single end-owner address: which (chain, role) pairs point to
+// it plus the Safe state we observed. Used by the Governance → Owner safe tab
+// and by the dashboard divergence banner.
+export interface OwnerSafeSummary {
+  address: string;
+  occurrences: Array<{ chain: ChainId; role: ProxyOwnerRole }>;
+  snapshots: Array<ChainTagged<SafeSnapshotEntity>>;
+  events: Array<ChainTagged<SafeEventEntity>>;
+}
+
+export function summarizeEndOwners(
+  perChain: Array<{ chain: ChainId; data: DashboardResponse; bootstraps: Record<ProxyOwnerRole, string | undefined> }>
+): OwnerSafeSummary[] {
+  const bucket = new Map<string, OwnerSafeSummary>();
+  const roles: ProxyOwnerRole[] = ['LoggerProxyAdmin', 'SafeDeploymentProxyAdmin'];
+
+  for (const { chain, data, bootstraps } of perChain) {
+    for (const role of roles) {
+      const info = endOwnerInfo(data, role, bootstraps[role]);
+      if (info.endOwner === undefined) continue;
+      const key = info.endOwner.toLowerCase();
+      const existing = bucket.get(key);
+      if (existing === undefined) {
+        bucket.set(key, {
+          address: info.endOwner,
+          occurrences: [{ chain, role }],
+          snapshots: [],
+          events: [],
+        });
+      } else {
+        existing.occurrences.push({ chain, role });
+      }
+    }
+
+    for (const snapshot of data.safeSnapshots) {
+      const key = snapshot.safe.toLowerCase();
+      const entry = bucket.get(key);
+      if (entry !== undefined) {
+        entry.snapshots.push({ ...snapshot, chain });
+      }
+    }
+    for (const event of data.safeEvents) {
+      const key = event.safe.toLowerCase();
+      const entry = bucket.get(key);
+      if (entry !== undefined) {
+        entry.events.push({ ...event, chain });
+      }
+    }
+  }
+
+  const summaries = Array.from(bucket.values());
+  summaries.sort((a, b) => b.occurrences.length - a.occurrences.length);
+  for (const s of summaries) {
+    s.events.sort(byBlockDesc);
+  }
+  return summaries;
+}
+
+// ---- Admin ownership transfers -------------------------------------------
+
+export interface AdminTransferRow {
+  key: string;
+  role: ProxyOwnerRole;
+  proxyAdmin: string;
+  previousOwner: string;
+  newOwner: string;
+  blockNumber: string;
+  blockTimestamp: string;
+  txHash: string;
+}
+
+export function adminTransfersForRole(
+  d: DashboardResponse,
+  role: ProxyOwnerRole | 'all'
+): AdminTransferRow[] {
+  const filtered =
+    role === 'all'
+      ? d.proxyAdminOwnershipTransferreds
+      : d.proxyAdminOwnershipTransferreds.filter((e) => e.role === role);
+  return filtered
+    .map((e) => ({
+      key: e.id,
+      role: e.role as ProxyOwnerRole,
+      proxyAdmin: e.proxyAdmin,
+      previousOwner: e.previousOwner,
+      newOwner: e.newOwner,
+      blockNumber: e.blockNumber,
+      blockTimestamp: e.blockTimestamp,
+      txHash: e.txHash,
+    }))
+    .sort(byBlockDesc);
 }
 
 export function allDelayChanges(d: DashboardResponse): DelayChangeEntity[] {

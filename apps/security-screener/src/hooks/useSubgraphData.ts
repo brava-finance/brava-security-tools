@@ -53,6 +53,9 @@ export interface MultiChainQueryResult<T> {
   // least one successful response. Surface to users so they know the merged
   // view is incomplete.
   isPartial: boolean;
+  // Latest `dataUpdatedAt` (ms epoch) across all successful chain queries.
+  // Undefined while every chain is still in-flight for the first time.
+  dataUpdatedAt: number | undefined;
 }
 
 export function useMultiDashboardData(
@@ -89,6 +92,7 @@ interface QueryLike<T> {
   data: T | undefined;
   isLoading: boolean;
   error: unknown;
+  dataUpdatedAt?: number;
 }
 
 function combineQueries<T>(
@@ -98,12 +102,21 @@ function combineQueries<T>(
   const merged: Array<ChainResult<T>> = [];
   let firstError: unknown = null;
   let anyLoading = false;
+  let latestUpdatedAt: number | undefined;
   for (let i = 0; i < chains.length; i++) {
     const r = results[i];
     if (r === undefined) continue;
     if (r.isLoading) anyLoading = true;
     if (r.error !== null && r.error !== undefined && firstError === null) firstError = r.error;
     if (r.data !== undefined) merged.push({ chain: chains[i] as ChainId, data: r.data });
+    if (r.dataUpdatedAt !== undefined && r.dataUpdatedAt > 0) {
+      // Track the *oldest* successful response — the merged view is only as
+      // fresh as its staler half. If a single chain hasn't responded yet we
+      // still record what we have so the UI can advertise partial freshness.
+      if (latestUpdatedAt === undefined || r.dataUpdatedAt < latestUpdatedAt) {
+        latestUpdatedAt = r.dataUpdatedAt;
+      }
+    }
   }
   const hasAny = merged.length > 0;
   return {
@@ -111,5 +124,6 @@ function combineQueries<T>(
     isLoading: !hasAny && anyLoading,
     error: firstError,
     isPartial: hasAny && anyLoading,
+    dataUpdatedAt: latestUpdatedAt,
   };
 }

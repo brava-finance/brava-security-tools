@@ -8,7 +8,14 @@ import { Tag } from '../components/Tag';
 import { useMultiDashboardData, useMultiDivergenceData } from '../hooks/useSubgraphData';
 import { CHAINS, type ChainId, type ViewId } from '../lib/config';
 import type { DashboardResponse, DivergenceResponse } from '../lib/queries';
-import { cn, formatBigIntBasis, formatRelative, formatTimestamp, shortAddress } from '../lib/format';
+import {
+  cn,
+  formatBigIntBasis,
+  formatDurationSeconds,
+  formatRelative,
+  formatTimestamp,
+  shortAddress,
+} from '../lib/format';
 
 type Category = 'action' | 'pool' | 'fee' | 'role' | 'token' | 'proxy' | 'safe' | 'delay';
 
@@ -489,14 +496,77 @@ function collectEvents(
       </span>
     );
 
-  for (const e of d.loggerUpgradeds)
+  // Build "previous implementation" lookups by replaying upgrade events in
+  // block order. The subgraph only carries the new implementation per event,
+  // so the diff has to be computed client-side. Same logic for the
+  // safe-deployment proxy below.
+  const previousImplFor = <
+    T extends { id: string; implementation: string; blockNumber: string; txHash: string },
+  >(
+    events: T[]
+  ): Map<string, string | undefined> => {
+    const sorted = [...events].sort(byBlockAscLocal);
+    const out = new Map<string, string | undefined>();
+    for (let i = 0; i < sorted.length; i++) {
+      const ev = sorted[i];
+      if (ev === undefined) continue;
+      out.set(ev.id, sorted[i - 1]?.implementation);
+    }
+    return out;
+  };
+
+  const previousLoggerImpl = previousImplFor(d.loggerUpgradeds);
+  for (const e of d.loggerUpgradeds) {
+    const prev = previousLoggerImpl.get(e.id);
     push(
       'lu',
       e,
       'proxy',
       'upgrade',
       <span>
-        Logger proxy upgraded → <AddressLink chain={chainCfg} address={e.implementation} />
+        Logger proxy implementation{' '}
+        {prev !== undefined ? (
+          <>
+            <AddressLink chain={chainCfg} address={prev} /> →{' '}
+          </>
+        ) : (
+          <em className='text-[var(--color-text-faint)]'>initial </em>
+        )}
+        <AddressLink chain={chainCfg} address={e.implementation} />
+      </span>
+    );
+  }
+
+  const previousSafeImpl = previousImplFor(d.safeDeploymentUpgradeds);
+  for (const e of d.safeDeploymentUpgradeds) {
+    const prev = previousSafeImpl.get(e.id);
+    push(
+      'su',
+      e,
+      'proxy',
+      'upgrade',
+      <span>
+        Safe-deployment proxy implementation{' '}
+        {prev !== undefined ? (
+          <>
+            <AddressLink chain={chainCfg} address={prev} /> →{' '}
+          </>
+        ) : (
+          <em className='text-[var(--color-text-faint)]'>initial </em>
+        )}
+        <AddressLink chain={chainCfg} address={e.implementation} />
+      </span>
+    );
+  }
+  for (const e of d.safeDeploymentProxyAdminChangeds)
+    push(
+      'sa',
+      e,
+      'proxy',
+      'admin-changed',
+      <span>
+        Safe-deployment proxy admin <AddressLink chain={chainCfg} address={e.previousAdmin} /> →{' '}
+        <AddressLink chain={chainCfg} address={e.newAdmin} />
       </span>
     );
   for (const e of d.loggerProxyAdminChangeds)
@@ -542,7 +612,16 @@ function collectEvents(
       'delay',
       'delay-changed',
       <span>
-        Delay changed {e.oldDelay}s → {e.newDelay}s
+        Proposal delay <span className='mono'>{formatDurationSeconds(Number(e.oldDelay))}</span> →{' '}
+        <span className='mono'>{formatDurationSeconds(Number(e.newDelay))}</span>
       </span>
     );
+}
+
+function byBlockAscLocal<T extends { blockNumber: string; txHash: string }>(a: T, b: T): number {
+  const ab = BigInt(a.blockNumber);
+  const bb = BigInt(b.blockNumber);
+  if (ab < bb) return -1;
+  if (ab > bb) return 1;
+  return a.txHash.localeCompare(b.txHash);
 }

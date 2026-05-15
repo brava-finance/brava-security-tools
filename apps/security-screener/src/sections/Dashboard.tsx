@@ -509,6 +509,15 @@ function SafeDeploymentProxyCard({
   );
 }
 
+interface DelayRow {
+  chain: ChainId;
+  // `undefined` here means we never saw a `DelayChange` event. Per protocol
+  // design that's equivalent to the contract default of 0 (no delay), so we
+  // surface it as such rather than as a benign "not indexed".
+  hasDelay: boolean;
+  pretty: string;
+}
+
 function DelayCard({
   chains,
   isMulti,
@@ -516,37 +525,49 @@ function DelayCard({
   chains: Array<ChainResult<DashboardResponse>>;
   isMulti: boolean;
 }) {
-  const rows = chains.map(({ chain, data }) => ({
-    chain,
-    pretty: prettyDelay(data),
-  }));
+  const rows: DelayRow[] = chains.map(({ chain, data }) => {
+    const s = latestDelaySeconds(data);
+    if (s === undefined || s === 0n) {
+      return { chain, hasDelay: false, pretty: 'no delay set' };
+    }
+    return { chain, hasDelay: true, pretty: formatDurationSeconds(Number(s)) };
+  });
+
   return (
     <Card
       title='Proposal delay'
-      subtitle='Time-lock that every admin-vault proposal must wait out'
+      subtitle='Time-lock that every admin-vault proposal must wait out before it can be executed. "No delay set" means proposals can be executed immediately after being granted.'
     >
       {isMulti ? (
         <ul className='grid gap-2'>
           {rows.map((r) => (
-            <li key={r.chain} className='flex items-center justify-between'>
+            <li key={r.chain} className='flex items-center justify-between gap-3'>
               <ChainBadge chain={r.chain} variant='short' />
-              <span className='mono text-base text-[var(--color-text)]'>{r.pretty}</span>
+              <span
+                className={cn(
+                  'mono text-base',
+                  r.hasDelay ? 'text-[var(--color-text)]' : 'text-[var(--color-bad)]'
+                )}
+              >
+                {r.pretty}
+              </span>
             </li>
           ))}
         </ul>
       ) : rows[0] !== undefined ? (
-        <span className='mono text-2xl text-[var(--color-text)]'>{rows[0].pretty}</span>
+        <span
+          className={cn(
+            'mono text-2xl',
+            rows[0].hasDelay ? 'text-[var(--color-text)]' : 'text-[var(--color-bad)]'
+          )}
+        >
+          {rows[0].pretty}
+        </span>
       ) : (
         <span className='text-[var(--color-text-faint)]'>no data</span>
       )}
     </Card>
   );
-}
-
-function prettyDelay(data: DashboardResponse): string {
-  const s = latestDelaySeconds(data);
-  if (s === undefined) return 'contract default';
-  return formatDurationSeconds(Number(s));
 }
 
 function SafeSetupCard({

@@ -2,7 +2,9 @@ import { useState } from 'react';
 
 import { NetworkTabs } from './components/NetworkTabs';
 import { SectionNav, type SectionId } from './components/SectionNav';
+import { useMultiDashboardData } from './hooks/useSubgraphData';
 import { VIEW_META, type ViewId } from './lib/config';
+import { formatRelative, formatTimestamp } from './lib/format';
 import { Actions } from './sections/Actions';
 import { Dashboard } from './sections/Dashboard';
 import { Divergence } from './sections/Divergence';
@@ -17,6 +19,12 @@ import { Verify } from './sections/Verify';
 export function App() {
   const [view, setView] = useState<ViewId>('all');
   const [section, setSection] = useState<SectionId>('dashboard');
+  // Surface "data last refreshed" in the header so users can tell at a glance
+  // whether the site is alive or showing stale subgraph data. Sharing this
+  // hook with the Dashboard is intentional — react-query deduplicates the
+  // fetch, so this read is free.
+  const headerData = useMultiDashboardData(view);
+  const dataUpdatedAt = headerData.dataUpdatedAt;
 
   return (
     <div className='mx-auto flex min-h-screen max-w-[1280px] flex-col gap-6 px-6 py-8'>
@@ -55,6 +63,11 @@ export function App() {
             <span className='text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]'>
               viewing {VIEW_META[view].label}
             </span>
+            <DataFreshness
+              updatedAtMs={dataUpdatedAt}
+              isLoading={headerData.isLoading}
+              isPartial={headerData.isPartial}
+            />
           </div>
         </div>
       </header>
@@ -88,5 +101,45 @@ export function App() {
         </span>
       </footer>
     </div>
+  );
+}
+
+function DataFreshness({
+  updatedAtMs,
+  isLoading,
+  isPartial,
+}: {
+  updatedAtMs: number | undefined;
+  isLoading: boolean;
+  isPartial: boolean;
+}) {
+  if (isLoading && updatedAtMs === undefined) {
+    return (
+      <span className='text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]'>
+        data: fetching…
+      </span>
+    );
+  }
+  if (updatedAtMs === undefined) {
+    return (
+      <span className='text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]'>
+        data: unknown
+      </span>
+    );
+  }
+  // Anything within the last ~5s gets a "just now" label rather than the raw
+  // "0s ago" — the latter reads as if the data hasn't moved, which is
+  // confusing right after a fetch completes.
+  const ageMs = Date.now() - updatedAtMs;
+  const seconds = Math.floor(updatedAtMs / 1000);
+  const label = ageMs < 5_000 ? 'just now' : formatRelative(seconds);
+  return (
+    <span
+      className='text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]'
+      title={`Subgraph last responded at ${formatTimestamp(seconds)}`}
+    >
+      data updated {label}
+      {isPartial ? ' · partial' : ''}
+    </span>
   );
 }

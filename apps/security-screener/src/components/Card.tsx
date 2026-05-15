@@ -30,7 +30,11 @@ export function Card({
   return (
     <section
       className={cn(
-        'relative card-raised overflow-hidden transition-colors hover:border-[var(--color-border)]',
+        // `[overflow:clip]` clips the accent stripe / rounded corners
+        // without establishing a CSS scroll container — that's required so
+        // sticky table headers inside this card can stay sticky relative to
+        // the page viewport rather than to the card itself.
+        'relative card-raised [overflow:clip] transition-colors hover:border-[var(--color-border)]',
         className
       )}
     >

@@ -39,10 +39,18 @@ export function Table<T>({
     );
   }
   return (
-    <div className={cn('overflow-x-auto', className)}>
+    // Below `md`, allow the table to scroll horizontally inside its wrapper
+    // — at that viewport the sticky header is a non-goal anyway. At `md`
+    // and up we drop the scroll container entirely so `<thead>` can be
+    // sticky relative to the page viewport (Card uses `overflow: clip` so
+    // it doesn't establish a scroll container either).
+    <div className={cn('max-md:overflow-x-auto', className)}>
       <table className='w-full text-left text-xs'>
-        <thead className='bg-[var(--color-bg-elev)]/40'>
-          <tr className='border-b border-[var(--color-border-subtle)] text-[var(--color-text-faint)]'>
+        {/* Sticky header: stays glued to the top of the page viewport,
+            offset just below the section-nav bar (~44px tall) so the
+            column labels remain visible while scrolling long tables. */}
+        <thead className='sticky top-11 z-[5] bg-[var(--color-bg-raised)] shadow-[inset_0_-1px_0_var(--color-border-subtle)] backdrop-blur'>
+          <tr className='text-[var(--color-text-faint)]'>
             {columns.map((col) => (
               <th
                 key={col.key}

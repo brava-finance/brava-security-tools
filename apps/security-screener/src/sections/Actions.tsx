@@ -90,6 +90,32 @@ export function Actions({ view }: Props) {
     </div>
   );
 
+  const unresolvedNotice =
+    reviewCount > 0 ? (
+      <div className='border-b border-[var(--color-border-subtle)] bg-[color-mix(in_srgb,var(--color-warn)_6%,transparent)] px-4 py-3 text-[11px] leading-relaxed text-[var(--color-text-muted)]'>
+        <div className='mb-1 flex items-center gap-2'>
+          <Tag variant='warn'>{reviewCount} unresolved</Tag>
+          <span className='font-medium text-[var(--color-text)]'>What does "unresolved" mean?</span>
+        </div>
+        <p>
+          An action shows up as unresolved when the screener couldn't read its
+          <span className='mono'> protocolName </span> or
+          <span className='mono'> actionType </span> via the standard ActionBase interface — usually
+          because it's a custom action contract or one that doesn't follow the Brava interface.
+          These rows do <strong>not</strong> imply the action is being executed; they just mean the
+          screener can't categorise it from on-chain metadata alone.
+        </p>
+        <p className='mt-1'>
+          The Brava team treats every unresolved action as an alert: it gets manually investigated
+          and, in most cases, removed from the AdminVault whitelist. If an attacker controlled an
+          unresolved action contract, the action would still be subject to the same delay and
+          owner-Safe approval flow as any other; this row exists so users can independently verify
+          that follow-up has happened. Cross-check the implementation address on the explorer
+          before assuming anything.
+        </p>
+      </div>
+    ) : null;
+
   const columns: Array<Column<(typeof rows)[number]>> = [
     ...(isMulti
       ? [
@@ -171,6 +197,7 @@ export function Actions({ view }: Props) {
       actions={actions}
       dense
     >
+      {unresolvedNotice}
       <Table
         columns={columns}
         rows={rows}

@@ -12,6 +12,7 @@ import { CHAINS, type ChainId, type ViewId } from '../lib/config';
 import { deriveRolesFromAccessControl, deriveRolesFromLogger } from '../lib/derive';
 import type { DerivedEntry, RoleMeta } from '../lib/derive';
 import { formatRelative, formatTimestamp, shortAddress } from '../lib/format';
+import { ROLE_EXPLAINERS, type RoleExplainer } from '../lib/governance';
 
 interface Props {
   view: ViewId;
@@ -191,28 +192,71 @@ export function Roles({ view }: Props) {
       {groups.length === 0 ? (
         <Empty>No active roles indexed for this view.</Empty>
       ) : (
-        groups.map((g) => (
-          <Card
-            key={g.role}
-            title={
-              <div className='flex flex-wrap items-baseline gap-2'>
-                <span className='mono'>{g.roleName}</span>
-                <Tag variant='neutral'>
-                  {g.members.length} member{g.members.length === 1 ? '' : 's'}
-                </Tag>
-              </div>
-            }
-            subtitle={
-              <span className='mono text-[10px] text-[var(--color-text-faint)]'>
-                {shortAddress(g.role, 8)}
-              </span>
-            }
-            dense
-          >
-            <Table columns={columns} rows={g.members} getRowKey={(r) => r.key} />
-          </Card>
-        ))
+        groups.map((g) => {
+          const explainer = ROLE_EXPLAINERS[g.roleName];
+          return (
+            <Card
+              key={g.role}
+              title={
+                <div className='flex flex-wrap items-baseline gap-2'>
+                  <span className='mono'>{g.roleName}</span>
+                  <Tag variant='neutral'>
+                    {g.members.length} member{g.members.length === 1 ? '' : 's'}
+                  </Tag>
+                  {explainer !== undefined && <RoleRiskTag risk={explainer.risk} />}
+                </div>
+              }
+              subtitle={
+                <span className='mono text-[10px] text-[var(--color-text-faint)]'>
+                  {shortAddress(g.role, 8)}
+                </span>
+              }
+              dense
+            >
+              <RoleExplainerBlock explainer={explainer} roleName={g.roleName} />
+              <Table columns={columns} rows={g.members} getRowKey={(r) => r.key} />
+            </Card>
+          );
+        })
       )}
     </div>
   );
+}
+
+function RoleExplainerBlock({
+  explainer,
+  roleName,
+}: {
+  explainer: RoleExplainer | undefined;
+  roleName: string;
+}) {
+  if (explainer === undefined) {
+    return (
+      <div className='border-b border-[var(--color-border-subtle)] px-4 py-3 text-xs text-[var(--color-text-faint)]'>
+        Unknown role — no documented capabilities for <span className='mono'>{roleName}</span>.
+        Treat membership as potentially privileged until verified against the Roles.sol source.
+      </div>
+    );
+  }
+  return (
+    <div className='border-b border-[var(--color-border-subtle)] px-4 py-3'>
+      <p className='text-xs leading-relaxed text-[var(--color-text-muted)]'>{explainer.summary}</p>
+      {explainer.capabilities.length > 0 && (
+        <ul className='mt-2 list-disc space-y-0.5 pl-4 text-[11px] text-[var(--color-text-muted)]'>
+          {explainer.capabilities.map((c) => (
+            <li key={c}>{c}</li>
+          ))}
+        </ul>
+      )}
+      <p className='mt-2 text-[10px] text-[var(--color-text-faint)]'>
+        Compromise risk: <strong className='font-medium'>{explainer.risk}</strong> — the impact if
+        a single account in this role is compromised, assuming no other safeguards intervene.
+      </p>
+    </div>
+  );
+}
+
+function RoleRiskTag({ risk }: { risk: RoleExplainer['risk'] }) {
+  const variant: 'ok' | 'warn' | 'bad' = risk === 'low' ? 'ok' : risk === 'medium' ? 'warn' : 'bad';
+  return <Tag variant={variant}>risk: {risk}</Tag>;
 }

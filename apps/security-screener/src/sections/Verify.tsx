@@ -2,6 +2,7 @@ import { Card } from '../components/Card';
 import { ChainBadge } from '../components/ChainBadge';
 import { AddressLink } from '../components/ExplorerLink';
 import { CHAINS, CHAIN_ORDER } from '../lib/config';
+import { AUDIT_INDEX_URL, AUDIT_REPORTS } from '../lib/governance';
 
 interface VerifyInfo {
   buildCommit: string | undefined;
@@ -147,6 +148,49 @@ export function Verify() {
             );
           })}
         </div>
+      </Card>
+
+      <Card
+        title='Security audits'
+        subtitle='Third-party reviews of the Brava AdminVault, Logger and supporting contracts. Audit scope is shown explicitly — an audit only covers the code paths it lists.'
+        actions={
+          <a
+            href={AUDIT_INDEX_URL}
+            target='_blank'
+            rel='noreferrer'
+            className='text-xs text-[var(--color-accent)] hover:underline'
+          >
+            Canonical audit index →
+          </a>
+        }
+      >
+        <ul className='grid gap-2'>
+          {AUDIT_REPORTS.map((a) => (
+            <li
+              key={`${a.firm}-${a.date}`}
+              className='flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-raised)]/50 px-3 py-2 text-xs'
+            >
+              <div className='flex flex-col gap-0.5'>
+                <span className='font-medium text-[var(--color-text)]'>{a.firm}</span>
+                <span className='text-[var(--color-text-muted)]'>{a.scope}</span>
+              </div>
+              <div className='flex items-center gap-3 text-[var(--color-text-muted)]'>
+                <span className='mono text-[11px]'>{a.date}</span>
+                <a href={a.url} target='_blank' rel='noreferrer'>
+                  Read report →
+                </a>
+              </div>
+            </li>
+          ))}
+        </ul>
+        <p className='mt-3 text-[11px] leading-relaxed text-[var(--color-text-faint)]'>
+          The above mirrors the team's canonical list at{' '}
+          <a href={AUDIT_INDEX_URL} target='_blank' rel='noreferrer'>
+            docs.brava.finance/technical/audits
+          </a>
+          . The mirror lives in the bundle so the IPFS-pinned screener can list audits offline;
+          treat the canonical link as authoritative for anything newer than this build.
+        </p>
       </Card>
 
       <Card title='Why you should not trust a single view of this data'>
